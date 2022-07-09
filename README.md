@@ -1,6 +1,10 @@
 # TCP
 TCP libraries for the Vendetta Online plugin system
 
+TODO: 
+implement line terminator seeding functionality
+## INSTALLATION
+Drop the TCP folder into your vendetta online plugins folder
 ## USAGE
 
 ```lua
