@@ -22,7 +22,7 @@ NOTE:     This is not a drop in replacement for the original due to a changed in
 ]]
 
 -- A table to contain our awesomeness
-declare ("TCP", TCP or {})
+declare ("TCP", TCP or {client = {}})
 
 --creates a new tcp client with buffering built in
 function TCP.client.new(args)
@@ -169,7 +169,7 @@ function TCP.client.new(args)
                 function(line)  -- take the captured text in the "line" argument
                     -- send the captured text to the on_message callback
                     -- and trap any errors for safety
-                    pcall(self:onMsg, line)
+                    pcall(self.onMsg(self), line)
                     return ''
                 end
             )
@@ -207,7 +207,7 @@ function TCP.client.new(args)
             -- because only a portion of this line has been seent,
             -- we will remove the portion of the line that was sent and
             -- leave the rest to be sent when the loop comes back around
-            out_buffer[#out_buffer] = string.sub(out_buffer[1], chars_sent+1, -1)
+            out_buffer[1] = string.sub(out_buffer[1], chars_sent+1, -1)
 
             -- schedule this function to try again when the the buffer is ready
             tcp:SetWriteHandler(write_line_from_out_buffer)
