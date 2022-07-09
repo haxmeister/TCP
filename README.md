@@ -35,15 +35,15 @@ for example:
 ```lua
 local client = TCP.client.new()
 
-client.set_line_terminator("\n")
-client.on_connect(somefunction)
-client.on_disconnect(somefunction)
-client.on_message(somefunction)
+client:set_line_terminator("\n")
+client:on_connect(somefunction)
+client:on_disconnect(somefunction)
+client:on_message(somefunction)
 ```
 now we can call the methods in our code to put it to work for us
 for example:
 ```lua
-client.connect(host,port)
-client.send("some message to send")
-client.disconnect()
+client:connect(host,port)
+client:send("some message to send")
+client:disconnect()
 ```
