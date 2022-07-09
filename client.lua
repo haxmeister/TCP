@@ -50,17 +50,20 @@ function TCP.client.new()
 
     -- internal callback for when a message is received on the socket
     local function msg_received()
-    local msg, errcode = tcp:Recv()
 
-        -- check if the message was empty or absent
-    if (msg) then
-        -- now that errors are dealt with, let's add the message to the buffer
-        -- for processing
-        in_buffer = self.in_buffer..msg
+        -- attempt to receive from socket
+        local msg, errcode = tcp:Recv()
 
-    else
-        -- if there's an error code either then we are done:
-        if (errcode) then
+            -- check if the message was empty or absent
+        if (msg) then
+
+            -- message received, lets add it to the buffer
+            in_buffer = self.in_buffer..msg
+        
+            -- if there's an error code either then we are done:
+        elseif (errcode) then
+            
+            -- fetch the error message from the socket
             local err = tcp:GetSocketError()
 
             -- we disconnect since we have errors receiving
@@ -69,10 +72,9 @@ function TCP.client.new()
             -- launch the disconnect handler call back and send the error to it
             self:onDis(err)
 
-        end
             -- exit the function, because of erors or because we're done.
-        return
-    end
+            return
+        end
 
         -- now that errors are dealt with, let's add the message to the buffer
         -- for processing
@@ -216,7 +218,7 @@ function TCP.client.new()
         table.insert(out_buffer[1], line)
 
         -- now let's try sending the line
-        write_line_from_out_buffer
+        write_line_from_out_buffer()
         local
     end
     return self
