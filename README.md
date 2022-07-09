@@ -1,8 +1,9 @@
 # TCP
 TCP libraries for the Vendetta Online plugin system
-
-TODO: 
+### TODO: 
 implement line terminator seeding functionality
+## REQUIREMENTS
+This library requires no external libraries and is a layer directly on top of the built-in TCP function in Vendetta Online's plugin system. By using this interface instead of the built-in function, you gain proper buffering for your TCP connections.
 ## INSTALLATION
 Drop the TCP folder into your vendetta online plugins folder
 ## USAGE
