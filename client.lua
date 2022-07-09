@@ -50,34 +50,29 @@ function TCP.client.new()
 
     -- internal callback for when a message is received on the socket
     local function msg_received()
-        -- attempt to receive the available message
-        local msg, errcode = tcp:Recv()
+    local msg, errcode = tcp:Recv()
 
-         -- check if the message was empty or absent
-        if msg then
-            -- now that errors are dealt with, let's add the message to the buffer
-            -- for processing
-            in_buffer = self.in_buffer..msg
+        -- check if the message was empty or absent
+    if (msg) then
+        -- now that errors are dealt with, let's add the message to the buffer
+        -- for processing
+        in_buffer = self.in_buffer..msg
 
-        else
-            -- if there's no error code either then we are done:
-            if not errcode then
-                return
+    else
+        -- if there's an error code either then we are done:
+        if (errcode) then
+            local err = tcp:GetSocketError()
 
-            -- there is an error code, lets ask the socket what it is
-            else
-                local err = tcp:GetSocketError()
+            -- we disconnect since we have errors receiving
+            tcp:Disconnect()
 
-                -- we disconnect since we have errors receiving
-                tcp:Disconnect()
+            -- launch the disconnect handler call back and send the error to it
+            self:onDis(err)
 
-                -- launch the disconnect handler call back and send the error to it
-                self:onDis(err)
-
-                -- exit the function, cause errors..
-                return
-            end
         end
+            -- exit the function, because of erors or because we're done.
+        return
+    end
 
         -- now that errors are dealt with, let's add the message to the buffer
         -- for processing
@@ -226,6 +221,11 @@ function TCP.client.new()
     end
     return self
 end
+
+
+
+
+
 
 
 
