@@ -6,9 +6,9 @@ TCP libraries for the Vendetta Online plugin system
 ```lua
 local client = TCP.client.new(<table>)
 ```
-where the <table> is an optional parameter that allows you to initialize everything at once with the following available parameters:
+where the \<table\> is an optional parameter that allows you to initialize everything at once with the following available parameters:
 ```
-debug = <boolean>
+debug    = <boolean>
 line_end = <string>
 onCon    = <function>
 onDis    = <function>
