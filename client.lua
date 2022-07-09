@@ -46,139 +46,10 @@ function TCP.client.new()
         ['onCon']      = function() end, --- when connected
     }
 
-    --------------------- PRIVATE FUNCTIONS --------------------------
+    ------------------ PRIVATE FUNCTION PROTOTYPES ---------------------
 
-    -- internal callback for when a message is received on the socket
-    local function msg_received()
-
-        -- attempt to receive from socket
-        local msg, errcode = tcp:Recv()
-
-            -- check if the message was empty or absent
-        if (msg) then
-
-            -- message received, lets add it to the buffer
-            in_buffer = self.in_buffer..msg
-        
-            -- if there's an error code either then we are done:
-        elseif (errcode) then
-            
-            -- fetch the error message from the socket
-            local err = tcp:GetSocketError()
-
-            -- we disconnect since we have errors receiving
-            tcp:Disconnect()
-
-            -- launch the disconnect handler call back and send the error to it
-            self:onDis(err)
-
-            -- exit the function, because of erors or because we're done.
-            return
-        end
-
-        -- now that errors are dealt with, let's add the message to the buffer
-        -- for processing
-        in_buffer = self.in_buffer..msg
-
-        -- now lets loop through buffer and call the on_message callback
-        -- for every portion we extract that ends with the line terminator
-        repeat
-            in_buffer, match = string.gsub( in_buffer, "^([^\n]*)\n",
-
-                -- we found text in the buffer that ends with the delimiter
-                function(line)  -- take the captured text in the "line" argument
-                    -- send the captured text to the on_message callback
-                    -- and trap any errors for safety
-                    pcall(self:onMsg, line)
-                    return ''
-                end
-            )
-        -- do it again until there's no more complete lines
-        until match==0
-
-    -- all done for now!
-    end
-
-    -- tries to send the next line in the out buffer
-    -- re-schedules itself to run asyncronously when it fails to complete
-    local function write_line_from_out_buffer()
-
-        -- check if the out_buffer is empty (no lines to send)
-        if (not next(out_buffer)) then
-            -- nothing to send, we are done so let's
-            -- remove the buffer check from the loop
-            tcp:SetWriteHandler(nil)
-            return
-        end
-
-        -- try to send the next line in the "out buffer"
-        local chars_sent = tcp:Send( out_buffer[#out_buffer] )
-
-        -- if it failed to send the message at all, we find out here
-        if  (chars_sent == -1) then
-            -- could have been an EWOULDBLOCK but we can't tell
-
-            -- schedule this function to try again when the the buffer is ready
-            tcp:SetWriteHandler(write_line_from_out_buffer)
-
-        -- if it sent the string but only sent a portion of it, we find out here
-        elseif (chars_sent < string.len( out_buffer[#out_buffer] ) ) then
-
-            -- because only a portion of this line has been seent,
-            -- we will remove the portion of the line that was sent and
-            -- leave the rest to be sent when the loop comes back around
-            out_buffer[#out_buffer] = string.sub(out_buffer[#out_buffer], chars_sent+1, -1)
-
-            -- schedule this function to try again when the the buffer is ready
-            tcp:SetWriteHandler(write_line_from_out_buffer)
-        else
-            -- we land here because it appears the entire line was sent
-            -- so lets remove that line from the top of the out buffer
-            table.remove( out_buffer,1 )
-
-            -- schedule this function to run again to send the next line
-            tcp:SetWriteHandler(write_line_from_out_buffer)
-        end
-    end
-
-
-    -------------------------- PUBLIC INTERFACE ------------------------
-    --                              -                                  -
-    ---------------------------- SETTERS -------------------------------
-
-    -- sets the string that will be used to determine how to distinguish
-    -- different messages in the queue, this defaults to \n
-    function self:set_line_terminator(arg)
-        assert(type(arg) == "string", "line terminator must be a string but instead got: "..type(arg))
-        self.line_end = arg
-    end
-
-    -- set the callback function that will be executed when another
-    -- computer is connected, or this client establishes a connection
-    function self:do_on_connect(callback)
-        assert(type(callback) == "function", "on_connect is supposed to receive a function but instead got: "..type(callback))
-
-        -- save the user's callback function in the object
-        self.onCon = callback
-    end
-
-    -- set the callback function that will be executed when a connected
-    -- client is disconnected, or this client disconnects
-    function self:do_on_disconnect(callback)
-        assert(type(callback) == "function", "on_disconnect is supposed to receive a function but instead got: "..type(callback))
-
-        -- save the user's callback function in the object
-        self.onDis = callback
-    end
-
-    -- set the callback function that will be executed when a message
-    -- recieved on the socket and do the work of buffering incoming messages
-    function self:do_on_message(callback)
-        assert(type(callback) == "function", "on_message is supposed to receive a function but instead got: "..type(callback))
-
-        -- save the user's callback function in the object
-        self.onMsg = callback
-    end
+    local msg_received
+    local write_line_from_out_buffer
 
     ---------------------------- METHODS -------------------------------
 
@@ -210,17 +81,148 @@ function TCP.client.new()
         self:onDis()
     end
 
+    -- set the callback function that will be executed when another
+    -- computer is connected, or this client establishes a connection
+    function self:on_connect(callback)
+        assert(type(callback) == "function", "on_connect is supposed to receive a function but instead got: "..type(callback))
+
+        -- save the user's callback function in the object
+        self.onCon = callback
+    end
+
+    -- set the callback function that will be executed when a connected
+    -- client is disconnected, or this client disconnects
+    function self:on_disconnect(callback)
+        assert(type(callback) == "function", "on_disconnect is supposed to receive a function but instead got: "..type(callback))
+
+        -- save the user's callback function in the object
+        self.onDis = callback
+    end
+
+    -- set the callback function that will be executed when a message
+    -- recieved on the socket and do the work of buffering incoming messages
+    function self:on_message(callback)
+        assert(type(callback) == "function", "on_message is supposed to receive a function but instead got: "..type(callback))
+
+        -- save the user's callback function in the object
+        self.onMsg = callback
+    end
+
     function self:send(line)
         assert(type(line) == "string", "send is supposed to receive a string but instead got: "..type(line))
 
         -- add the line to the out buffer for sending
         -- (this will add the line to the tail or bottom of the queue
-        table.insert(out_buffer[1], line)
+        table.insert(out_buffer, line)
 
         -- now let's try sending the line
         write_line_from_out_buffer()
-        local
     end
+
+    -- sets the string that will be used to determine how to distinguish
+    -- different messages in the queue, this defaults to \n
+    function self:set_line_terminator(arg)
+        assert(type(arg) == "string", "line terminator must be a string but instead got: "..type(arg))
+        self.line_end = arg
+    end
+
+    --------------------- PRIVATE FUNCTIONS --------------------------
+
+    -- internal callback for when a message is received on the socket
+    msg_received = function()
+
+        -- attempt to receive from socket
+        local msg, errcode = tcp:Recv()
+
+            -- check if the message was empty or absent
+        if (msg) then
+
+            -- message received, lets add it to the buffer
+            in_buffer = self.in_buffer..msg
+        
+            -- if there's an error code either then we are done:
+        else
+            if (errcode) then
+                
+                -- fetch the error message from the socket
+                local err = tcp:GetSocketError()
+
+                -- we disconnect since we have errors receiving
+                self:disconnect()
+
+                -- launch the disconnect handler call back and send the error to it
+                self:onDis(err)
+
+                -- exit the function, because of erors or because we're done.
+                return
+            end
+        end
+
+        -- now that errors are dealt with, let's add the message to the buffer
+        -- for processing
+        in_buffer = self.in_buffer..msg
+
+        -- now lets loop through buffer and call the on_message callback
+        -- for every portion we extract that ends with the line terminator
+        repeat
+            in_buffer, match = string.gsub( in_buffer, "^([^\n]*)\n",
+
+                -- we found text in the buffer that ends with the delimiter
+                function(line)  -- take the captured text in the "line" argument
+                    -- send the captured text to the on_message callback
+                    -- and trap any errors for safety
+                    pcall(self:onMsg, line)
+                    return ''
+                end
+            )
+        -- do it again until there's no more complete lines
+        until match==0
+
+    -- all done for now!
+    end
+
+    -- tries to send the next line in the out buffer
+    -- re-schedules itself to run asyncronously when it fails to complete
+    write_line_from_out_buffer = function()
+
+        -- check if the out_buffer is empty (no lines to send)
+        if (not next(out_buffer)) then
+            -- nothing to send, we are done so let's
+            -- remove the buffer check from the loop
+            tcp:SetWriteHandler(nil)
+            return
+        end
+
+        -- try to send the next line in the "out buffer"
+        local chars_sent = tcp:Send( out_buffer[1] )
+
+        -- if it failed to send the message at all, we find out here
+        if  (chars_sent == -1) then
+            -- could have been an EWOULDBLOCK but we can't tell
+
+            -- schedule this function to try again when the the buffer is ready
+            tcp:SetWriteHandler(write_line_from_out_buffer)
+
+        -- if it sent the string but only sent a portion of it, we find out here
+        elseif (chars_sent < string.len( out_buffer[1] ) ) then
+
+            -- because only a portion of this line has been seent,
+            -- we will remove the portion of the line that was sent and
+            -- leave the rest to be sent when the loop comes back around
+            out_buffer[#out_buffer] = string.sub(out_buffer[1], chars_sent+1, -1)
+
+            -- schedule this function to try again when the the buffer is ready
+            tcp:SetWriteHandler(write_line_from_out_buffer)
+        else
+            -- we land here because it appears the entire line was sent
+            -- so lets remove that line from the top of the out buffer
+            table.remove( out_buffer,1 )
+
+            -- schedule this function to run again to send the next line
+            tcp:SetWriteHandler(write_line_from_out_buffer)
+        end
+    end
+
     return self
 end
 
