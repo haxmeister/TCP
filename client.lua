@@ -25,7 +25,7 @@ NOTE:     This is not a drop in replacement for the original due to a changed in
 declare ("TCP", TCP or {})
 
 --creates a new tcp client with buffering built in
-function TCP.client.new()
+function TCP.client.new(args)
 
     --------------------- PRIVATE VARIABLES --------------------------
 
@@ -36,14 +36,12 @@ function TCP.client.new()
     --------------------- PUBLIC VARIABLES ---------------------------
 
     local self = {
-        ['debug']      = false,
-        ['connected']  = false,
-        ['line_end']   = "\n",
-
-        -- place holders for user callbacks
-        ['onMsg']      = function() end, --- when message received
-        ['onDis']      = function() end, --- when disconnected
-        ['onCon']      = function() end, --- when connected
+        ['debug']     = args['debug']     or false,
+        ['connected'] = args['connected'] or false,
+        ['line_end']  = args['line_end']  or "\n",
+        ['onMsg']     = args['onMsg']     or function() end, --- when message received
+        ['onDis']     = args['onDis']     or function() end, --- when disconnected
+        ['onCon']     = args['onCon']     or function() end, --- when connected
     }
 
     ------------------ PRIVATE FUNCTION PROTOTYPES ---------------------
