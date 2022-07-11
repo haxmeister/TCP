@@ -58,7 +58,7 @@ function TCP.client.new(args)
         -- one connection per object please
         -- so lets make sure we disconnect if we are already connected
         if (self:is_connected()) then
-            debugMsg("already connected")
+            debugMsg("connect called but already connected")
             self:disconnect()
         end
         -- callback when data is available for reading. Disables callback if fn is nil.
@@ -78,23 +78,35 @@ function TCP.client.new(args)
             return false
         else
             -- we made it here so we must be connected
-            self.connected = true;
-
-            debugMsg("connected successfully ")
-            -- call the users callback function for on_connect
-            self:onCon()
-
+            -- lets check to see for sure because sometimes the
+            -- underlying Connect function lies
+            if self:is_connected() then
+                self.connected = true;
+                debugMsg("connected successfully ")
+                -- call the users callback function for on_connect
+                self:onCon()
+            else
+                -- looks like it lied to us
+                debugMsg("underlying Connect function lied and said were connected when we weren't")
+                return false
+            end
             return true
         end
     end
 
+    function self:debug(value)
+        assert(type(value) == "boolean", "debug function is supposed to receive a boolean (true or false) but instead got: "..type(value))
+        self.debug = value
+    end
+
     -- disconnects the client
     function self:disconnect()
+        debugMsg("attempting to disconnect..")
         repeat
             tcp:Disconnect()
         until self:is_connected() == false
+        debugMsg("disconnected successfully")
 
-        self.connected = false;
         self:onDis()
     end
 
@@ -103,7 +115,7 @@ function TCP.client.new(args)
     function self:is_connected()
         local peer = tcp:GetPeerName()
         if (peer ~= nil)then
-            debugMsg("still connected to peer"..peer)
+            debugMsg("is_connected says: still connected to peer "..peer)
             return true
         else
             return false
@@ -140,7 +152,14 @@ function TCP.client.new(args)
     -- send a line to the connection
     function self:send(line)
         assert(type(line) == "string", "send is supposed to receive a string but instead got: "..type(line))
-        debugMsg("received - "..line)
+        debugMsg("send method received - "..line)
+
+        -- if we got here but are not connected then
+        -- the user forgot to connect or lost connection
+        if not self:is_connected() then
+            return
+        end
+
         -- add the line to the out buffer for sending
         -- (this will add the line to the tail or bottom of the queue
         table.insert(out_buffer, line)
@@ -162,7 +181,9 @@ function TCP.client.new(args)
     -- prints debug messages if debug is set to true
     debugMsg = function(msg)
         if self.debug == true then
-            print(debug.getinfo(2).name..": "..msg)
+            --print(debug.getinfo(1).name..": "..msg)
+            msg = msg or ''
+            print("TCP debug: "..msg)
         end
     end
     -- internal callback for when a message is received on the socket
@@ -170,13 +191,13 @@ function TCP.client.new(args)
 
         -- attempt to receive from socket
         local msg, errcode = tcp:Recv()
-        
+
         if errcode then
             debugMsg(errcode)
         end
             -- check if the message was empty or absent
         if (msg) then
-            
+
             -- message received, lets add it to the buffer
             in_buffer = in_buffer..msg or msg
 
@@ -184,7 +205,7 @@ function TCP.client.new(args)
         else
             if (errcode) then
                 debugMsg("caught error code on recv socket: "..errcode)
-                
+
                 -- fetch the error message from the socket
                 local err = tcp:GetSocketError()
                 debugMsg(err)
@@ -220,9 +241,15 @@ function TCP.client.new(args)
     -- re-schedules itself to run asyncronously when it fails to complete
     write_line_from_out_buffer = function()
 
+        -- if we got here but are not connected then let's avoid
+        -- an error on the underlying layer by bailing out now
+        if not self:is_connected() then
+            return
+        end
+
         -- check if the out_buffer is empty (no lines to send)
-        if (#out_buffer ~= 0 ) then
-            debugMsg ("out buffer is empty")
+        if (not next(out_buffer) ) then
+            debugMsg ("out buffer is now empty")
             -- nothing to send, we are done so let's
             -- remove the buffer check from the loop
             tcp:SetWriteHandler(nil)
@@ -231,12 +258,12 @@ function TCP.client.new(args)
 
         -- try to send the next line in the "out buffer"
         local chars_sent = tcp:Send( out_buffer[1] )
-        debugMsg("chars sent - "..chars_sent)
 
         -- if it failed to send the message at all, we find out here
         if  (chars_sent == -1) then
+            local err = tcp:GetSocketError() or chars_sent
             -- could have been an EWOULDBLOCK but we can't tell
-            debugMsg("failed to send message with -1 unknown cause")
+            debugMsg("failed to send message with code: "..err)
             -- schedule this function to try again when the the buffer is ready
             tcp:SetWriteHandler(write_line_from_out_buffer)
 
