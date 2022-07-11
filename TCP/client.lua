@@ -221,7 +221,7 @@ function TCP.client.new(args)
         -- for every portion we extract that ends with the line terminator
         local match
         repeat
-            in_buffer, match = string.gsub( in_buffer, "^([^\n]*)\n",
+            in_buffer, match = string.gsub( in_buffer, "^([^"..self['line_end'].."]*)"..self['line_end'],
 
                 -- we found text in the buffer that ends with the delimiter
                 function(line)  -- take the captured text in the "line" argument
