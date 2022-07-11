@@ -22,11 +22,11 @@ NOTE:     This is not a drop in replacement for the original due to a changed in
 ]]
 
 -- A table to contain our awesomeness
-declare ("TCP", TCP or {client = {}})
-
+declare ("TCP", TCP or {})
+TCP.client = {}
 --creates a new tcp client with buffering built in
 function TCP.client.new(args)
-
+    args = args or {}
     --------------------- PRIVATE VARIABLES --------------------------
 
     local tcp = TCPSocket()  --- The underlying socket object
@@ -41,7 +41,7 @@ function TCP.client.new(args)
         ['line_end']  = args['line_end']  or "\n",
         ['onMsg']     = args['onMsg']     or function() end, --- when message received
         ['onDis']     = args['onDis']     or function() end, --- when disconnected
-        ['onCon']     = args['onCon']     or function() end, --- when connected
+        ['onCon']     = args['onCon']     or function() print("onCon place holder")end, --- when connected
     }
 
     ------------------ PRIVATE FUNCTION PROTOTYPES ---------------------
@@ -54,6 +54,12 @@ function TCP.client.new(args)
     -- connects as a client to the given host and port
     function self:connect(host,port)
 
+        -- one connection per object please
+        -- so lets make sure we disconnect if we are already connected
+        if (self:is_connected()) then
+            print("already connected so lets disconnect and reconnect")
+            self:disconnect()
+        end
         -- callback when data is available for reading. Disables callback if fn is nil.
         tcp:SetReadHandler(msg_received)
 
@@ -64,19 +70,40 @@ function TCP.client.new(args)
         -- attempt to connect to host and port
         local success,err = tcp:Connect(host, port)
 
-        -- if we can't connect then call the user's callback function
-        -- and send it the error
-        if not success then return self:onCon(err) end
+        -- if we can't connect then return false
+        if not success then
+            return false
+        else
+            -- we made it here so we must be connected
+            self.connected = true;
 
-        self.connected = true;
+            -- call the users callback function for on_connect
+            self:onCon()
 
+            return true
+        end
     end
 
     -- disconnects the client
     function self:disconnect()
-        tcp:Disconnect()
+        repeat
+            tcp:Disconnect()
+        until self:is_connected() == false
+
         self.connected = false;
         self:onDis()
+    end
+
+    -- checks for peer name as a way to see if we are connected or not
+    -- returns true if the connection appears valid
+    function self:is_connected()
+        local peer = tcp:GetPeerName()
+        if (peer ~= nil)then
+            print("still connected to peer"..peer)
+            return true
+        else
+            return false
+        end
     end
 
     -- set the callback function that will be executed when another
@@ -106,9 +133,10 @@ function TCP.client.new(args)
         self.onMsg = callback
     end
 
+    -- send a line to the connection
     function self:send(line)
         assert(type(line) == "string", "send is supposed to receive a string but instead got: "..type(line))
-
+        print ("send method received"..line)
         -- add the line to the out buffer for sending
         -- (this will add the line to the tail or bottom of the queue
         table.insert(out_buffer, line)
@@ -124,6 +152,7 @@ function TCP.client.new(args)
         self.line_end = arg
     end
 
+
     --------------------- PRIVATE FUNCTIONS --------------------------
 
     -- internal callback for when a message is received on the socket
@@ -136,32 +165,30 @@ function TCP.client.new(args)
         if (msg) then
 
             -- message received, lets add it to the buffer
-            in_buffer = self.in_buffer..msg
-        
+            if (in_buffer == nil)then
+                in_buffer =''
+                print("caught nil buffer")
+            end
+            in_buffer = in_buffer..msg
+
             -- if there's an error code either then we are done:
         else
             if (errcode) then
-                
+                print("caught error code on recv socket: "..errcode)
                 -- fetch the error message from the socket
                 local err = tcp:GetSocketError()
 
                 -- we disconnect since we have errors receiving
-                self:disconnect()
-
-                -- launch the disconnect handler call back and send the error to it
-                self:onDis(err)
+                self:disconnect(err)
 
                 -- exit the function, because of erors or because we're done.
                 return
             end
         end
 
-        -- now that errors are dealt with, let's add the message to the buffer
-        -- for processing
-        in_buffer = self.in_buffer..msg
-
         -- now lets loop through buffer and call the on_message callback
         -- for every portion we extract that ends with the line terminator
+        local match
         repeat
             in_buffer, match = string.gsub( in_buffer, "^([^\n]*)\n",
 
@@ -169,7 +196,7 @@ function TCP.client.new(args)
                 function(line)  -- take the captured text in the "line" argument
                     -- send the captured text to the on_message callback
                     -- and trap any errors for safety
-                    pcall(self.onMsg(self), line)
+                    pcall(self.onMsg, self, line)
                     return ''
                 end
             )
@@ -184,7 +211,8 @@ function TCP.client.new(args)
     write_line_from_out_buffer = function()
 
         -- check if the out_buffer is empty (no lines to send)
-        if (not next(out_buffer)) then
+        if (#out_buffer ~= 0 ) then
+            print ("nothing left to send")
             -- nothing to send, we are done so let's
             -- remove the buffer check from the loop
             tcp:SetWriteHandler(nil)
@@ -197,13 +225,13 @@ function TCP.client.new(args)
         -- if it failed to send the message at all, we find out here
         if  (chars_sent == -1) then
             -- could have been an EWOULDBLOCK but we can't tell
-
+            print("failed to send message  ")
             -- schedule this function to try again when the the buffer is ready
             tcp:SetWriteHandler(write_line_from_out_buffer)
 
         -- if it sent the string but only sent a portion of it, we find out here
         elseif (chars_sent < string.len( out_buffer[1] ) ) then
-
+            print("sent partial string")
             -- because only a portion of this line has been seent,
             -- we will remove the portion of the line that was sent and
             -- leave the rest to be sent when the loop comes back around
@@ -215,7 +243,7 @@ function TCP.client.new(args)
             -- we land here because it appears the entire line was sent
             -- so lets remove that line from the top of the out buffer
             table.remove( out_buffer,1 )
-
+            print("successful send?")
             -- schedule this function to run again to send the next line
             tcp:SetWriteHandler(write_line_from_out_buffer)
         end
