@@ -30,11 +30,11 @@ function TCP.client.new(args)
 
     --------------------- PRIVATE VARIABLES --------------------------
 
-    local tcp         = TCPSocket()  --- The underlying socket object
-    local in_buffer   = ''           --- a string of incoming text
-    local out_buffer  = {}           --- a list of lines waiting to be sent
-    local recon_timer = Timer()      --- a timer object for reconnect timer
-    local recon_attempts = 0         --- keep track of reconnection attempts
+    local tcp            = TCPSocket() --- The underlying socket object
+    local in_buffer      = ''          --- a string of incoming text
+    local out_buffer     = {}          --- a list of lines waiting to be sent
+    local recon_timer    = Timer()     --- a timer object for reconnect timer
+    local recon_attempts = 0           --- keep track of reconnection attempts
 
     --------------------- PUBLIC VARIABLES ---------------------------
 
@@ -45,8 +45,9 @@ function TCP.client.new(args)
         ['retry_wait']= args['retry_wait']or 2000,
         ['onMsg']     = args['onMsg']     or function() end, --- when message received
         ['onDis']     = args['onDis']     or function() end, --- when disconnected
-        ['onCon']     = args['onCon']     or function() end  --- when connected
-        ['host']      = args['host']      or false
+        ['onCon']     = args['onCon']     or function() end, --- when connected
+        ['onGiveup']  = args['onGiveup']  or function() end, --- when all attempts to reconnect are exhausted
+        ['host']      = args['host']      or false,
         ['port']      = args['port']      or false
     }
 
@@ -150,6 +151,15 @@ function TCP.client.new(args)
         self.onDis = callback
     end
 
+    -- set the callback function that will be executed when all attempts to reconnect
+    -- have been exhausted
+    function self:on_giveup(callback)
+        assert(type(callback) == "function", "on_disconnect is supposed to receive a function but instead got: "..type(callback))
+
+        -- save the user's callback function in the object
+        self.onDis = callback
+    end
+
     -- set the callback function that will be executed when a message
     -- recieved on the socket and do the work of buffering incoming messages
     function self:on_message(callback)
@@ -173,6 +183,7 @@ function TCP.client.new(args)
         -- if we got here but are not connected then
         -- the user forgot to connect or lost connection
         if not self:is_connected() then
+            reconnect() -- checks reconnection settings and reconnects if appropriate
             return
         end
 
@@ -205,7 +216,7 @@ function TCP.client.new(args)
         if self.debug == true then
             --print(debug.getinfo(1).name..": "..msg)
             msg = msg or ''
-            print("TCP debug: "..msg)
+            print("Client debug: "..msg)
         end
     end
 
@@ -331,7 +342,11 @@ function TCP.client.new(args)
         end
 
         -- if we are already at the max attempts then let's bail out
-        if recon_attempts >= self['retry_max'] then
+        if recon_attempts > self['retry_max'] then
+            
+            -- call the users on_giveup callback function
+            self:on_giveup()
+
             return
         end
 
