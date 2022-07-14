@@ -27,21 +27,27 @@ TCP.client = {}
 --creates a new tcp client with buffering built in
 function TCP.client.new(args)
     args = args or {}
+
     --------------------- PRIVATE VARIABLES --------------------------
 
-    local tcp = TCPSocket()  --- The underlying socket object
-    local in_buffer = ''     --- a string of incoming text
-    local out_buffer = {}    --- a list of lines waiting to be sent
+    local tcp         = TCPSocket()  --- The underlying socket object
+    local in_buffer   = ''           --- a string of incoming text
+    local out_buffer  = {}           --- a list of lines waiting to be sent
+    local recon_timer = Timer()      --- a timer object for reconnect timer
+    local recon_attempts = 0         --- keep track of reconnection attempts
 
     --------------------- PUBLIC VARIABLES ---------------------------
 
     local self = {
         ['debug']     = args['debug']     or false,
-        ['connected'] = args['connected'] or false,
         ['line_end']  = args['line_end']  or "\n",
+        ['retry_max'] = args['retry_max'] or 0,
+        ['retry_wait']= args['retry_wait']or 2000,
         ['onMsg']     = args['onMsg']     or function() end, --- when message received
         ['onDis']     = args['onDis']     or function() end, --- when disconnected
-        ['onCon']     = args['onCon']     or function() print("onCon place holder")end, --- when connected
+        ['onCon']     = args['onCon']     or function() end  --- when connected
+        ['host']      = args['host']      or false
+        ['port']      = args['port']      or false
     }
 
     ------------------ PRIVATE FUNCTION PROTOTYPES ---------------------
@@ -49,17 +55,19 @@ function TCP.client.new(args)
     local msg_received
     local write_line_from_out_buffer
     local debugMsg
+    local reconnect
 
     ---------------------------- METHODS -------------------------------
 
     -- connects as a client to the given host and port
-    function self:connect(host,port)
+    -- returns true if successful, false if not
+    function self:connect()
 
         -- one connection per object please
         -- so lets make sure we disconnect if we are already connected
         if (self:is_connected()) then
             debugMsg("connect called but already connected")
-            self:disconnect()
+            return true
         end
         -- callback when data is available for reading. Disables callback if fn is nil.
         tcp:SetReadHandler(msg_received)
@@ -69,7 +77,7 @@ function TCP.client.new(args)
         tcp:SetWriteHandler(write_line_from_out_buffer)
 
         -- attempt to connect to host and port
-        local success,err = tcp:Connect(host, port)
+        local success,err = tcp:Connect(self['host'], self['port'])
 
         -- if we can't connect then return false
         if not success then
@@ -81,7 +89,6 @@ function TCP.client.new(args)
             -- lets check to see for sure because sometimes the
             -- underlying Connect function lies
             if self:is_connected() then
-                self.connected = true;
                 debugMsg("connected successfully ")
                 -- call the users callback function for on_connect
                 self:onCon()
@@ -90,10 +97,13 @@ function TCP.client.new(args)
                 debugMsg("underlying Connect function lied and said were connected when we weren't")
                 return false
             end
+
+            -- we made it to the end so must have been successful
             return true
         end
     end
 
+    -- turns on debugging messages
     function self:debug(value)
         assert(type(value) == "boolean", "debug function is supposed to receive a boolean (true or false) but instead got: "..type(value))
         self.debug = value
@@ -122,8 +132,8 @@ function TCP.client.new(args)
         end
     end
 
-    -- set the callback function that will be executed when another
-    -- computer is connected, or this client establishes a connection
+    -- set the callback function that will be executed when this client
+    -- establishes a connection
     function self:on_connect(callback)
         assert(type(callback) == "function", "on_connect is supposed to receive a function but instead got: "..type(callback))
 
@@ -147,6 +157,12 @@ function TCP.client.new(args)
 
         -- save the user's callback function in the object
         self.onMsg = callback
+    end
+
+    -- sets timers for automatically reconnecting
+    function self:auto_reconnect(tries, milliseconds)
+        self['retry_max'] = tries
+        self['retry_wait'] = milliseconds
     end
 
     -- send a line to the connection
@@ -176,6 +192,12 @@ function TCP.client.new(args)
     end
 
 
+    function self:set_host_port(host, port)
+        assert(type(host) == 'string', "set_host_port requires a string for the host address but received: "..type(host))
+        assert(type(port) == 'number', "set_host_port requires a number for the port but instead received: "..type(port))
+        self.host = host
+        self.port = port
+    end
     --------------------- PRIVATE FUNCTIONS --------------------------
 
     -- prints debug messages if debug is set to true
@@ -186,22 +208,18 @@ function TCP.client.new(args)
             print("TCP debug: "..msg)
         end
     end
+
     -- internal callback for when a message is received on the socket
     msg_received = function()
 
         -- attempt to receive from socket
         local msg, errcode = tcp:Recv()
 
-        if errcode then
-            debugMsg(errcode)
-        end
-            -- check if the message was empty or absent
+        -- check if the message was empty or absent
         if (msg) then
 
             -- message received, lets add it to the buffer
             in_buffer = in_buffer..msg or msg
-
-            -- if there's an error code either then we are done:
         else
             if (errcode) then
                 debugMsg("caught error code on recv socket: "..errcode)
@@ -211,6 +229,9 @@ function TCP.client.new(args)
                 debugMsg(err)
                 -- we disconnect since we have errors receiving
                 self:disconnect(err)
+
+                -- reconnect if required
+                reconnect()
 
                 -- exit the function, because of erors or because we're done.
                 return
@@ -288,7 +309,46 @@ function TCP.client.new(args)
         end
     end
 
-    return self
+
+    -- tries to reconnect if a timer is set
+    reconnect = function()
+
+        -- if the user doesn't want to auto-reconnect then bail out here
+        if self['retry_max'] == 0 then
+            return
+        end
+
+        -- if the client is already connected then stop timers
+        -- and reset counter and bail
+        if self:is_connected() then
+            recon_attempts = 0 -- reset the count
+
+            if recon_timer:IsActive() then
+                recon_timer:Kill() -- stop the timer if it's running
+            end
+
+            return
+        end
+
+        -- if we are already at the max attempts then let's bail out
+        if recon_attempts >= self['retry_max'] then
+            return
+        end
+
+        -- we are not connected so lets try this again
+        recon_attempts = recon_attempts +1
+        if self:connect() then
+            -- we seem to have connected so reset everything and exit
+            recon_attempts = 0
+            recon_timer:Kill() --stop the timer if its running
+            return
+        else
+            -- reconnect attempt failed so set a timer to come back here
+            recon_timer:SetTimeout(self['retry_wait'], reconnect)
+        end
+
+        return
+    end
 end
 
 
