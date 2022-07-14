@@ -51,6 +51,19 @@ function TCP.client.new(args)
         ['port']      = args['port']      or false
     }
 
+    -- lets type check the arguments here to catch early errors
+    assert(type(self['debug'])     == "boolean", "debug parameter to new() requires a boolean but received "..type(self['debug']))
+    assert(type(self['line_end'])  == "string", "line_end parameter to new() requires a string but received "..type(self['line_end']))
+    assert(type(self['retry_max']) == "number", "retry_max parameter to new() requires a number but received "..type(self['retry_max']))
+    assert(type(self['retry_wait'])== "number", "retry_wait parameter to new() requires a number but received "..type(self['retry_wait']))
+    assert(type(self['onMsg'])     == "function", "onMsg parameter to new() requires a function but received "..type(self['onMsg']))
+    assert(type(self['onDis'])     == "function", "onDis parameter to new() requires a function but received "..type(self['onDis']))
+    assert(type(self['onCon'])     == "function", "onCon parameter to new() requires a function but received "..type(self['onCon']))
+    assert(type(self['onGiveup'])  == "function", "onGiveup parameter to new() requires a function but received "..type(self['onGiveup']))
+    assert(type(self['host'])      == "string", "host parameter to new() requires a string but received "..type(self['host']))
+    assert(type(self['port'])      == "number", "port parameter to new() requires a number but received "..type(self['port']))
+
+  
     ------------------ PRIVATE FUNCTION PROTOTYPES ---------------------
 
     local msg_received
@@ -171,6 +184,8 @@ function TCP.client.new(args)
 
     -- sets timers for automatically reconnecting
     function self:auto_reconnect(tries, milliseconds)
+        assert(type(tries) = 'number', "auto_reconnect function requires a number for the number of tries but instead received: "..type(tries))
+        assert(type(milliseconds) = 'number', "auto_reconnect function requires a number for the number of milliseconds but instead received: "..type(tries))
         self['retry_max'] = tries
         self['retry_wait'] = milliseconds
     end
