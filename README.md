@@ -10,9 +10,12 @@ Drop the TCP folder into your vendetta online plugins folder and call it using `
 
 ```lua
 dofile("../TCP/client.lua")
-local client = TCP.client.new(<table>)
+local client = TCP.client.new {
+    ['host'] = "111.11.111.11", -- a string
+    ['port'] = 1111 -- a number
+}
 ```
-where the \<table\> is an optional parameter that allows you to initialize everything at once with the following available parameters:
+where the host and port are required, there are also optional parameters that allows you to initialize everything at once with the following available parameters:
 ```
 debug    = <boolean>
 line_end = <string>
@@ -26,6 +29,8 @@ for example:
 dofile("../TCP/client.lua")
 
 local client = TCP.client.new {
+    ['host']     = "111.11.111.11",
+    ['port']     = 1111,
     ['debug']    = true,
     ['line_end'] = "\n",
     ['onCon']    = somefunction,
@@ -34,7 +39,7 @@ local client = TCP.client.new {
 }
 ```
 
-or you may initialize all the parameters after the object has been created
+or you may initialize all the optional parameters after the object has been created
 for example:
 ```lua
 dofile("../TCP/client.lua")
