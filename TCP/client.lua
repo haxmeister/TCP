@@ -1,4 +1,4 @@
---[[
+--[[ 
 Author:   Joshua S. Day (haxmeister) haxmeister@hotmail.com
 
 Website:  www.haxmeister.com
@@ -33,7 +33,7 @@ function TCP.client.new(args)
     local tcp            = TCPSocket() --- The underlying socket object
     local in_buffer      = ''          --- a string of incoming text
     local out_buffer     = {}          --- a list of lines waiting to be sent
-    local connected      = false       --- keep track if we are connected 
+    local connected      = false       --- keep track if we are connected
 
     --------------------- PUBLIC VARIABLES ---------------------------
 
@@ -43,8 +43,8 @@ function TCP.client.new(args)
         ['onMsg']     = args['onMsg']     or function() end, --- when message received
         ['onDis']     = args['onDis']     or function() end, --- when disconnected
         ['onCon']     = args['onCon']     or function() end, --- when connected
-        ['host']      = args['host']      or false,
-        ['port']      = args['port']      or false
+        ['host']      = args['host']      or '',
+        ['port']      = args['port']      or -1
     }
 
     -- lets type check the arguments here to catch early errors
@@ -62,30 +62,30 @@ function TCP.client.new(args)
     local write_line_from_out_buffer
     local debugMsg
     local conHandler
- 
+
     ---------------------------- METHODS -------------------------------
 
     -- connects as a client to the given host and port
     -- returns true if successful, false if not
     function self:connect()
-        debugMsg("in self:connect() method")
+        debugMsg("self:connect()")
 
         -- one connection per object please
         -- so lets make sure we disconnect if we are already connected
         if (connected) then
-            debugMsg("connect called but already connected")
+            debugMsg("self:connect() called but already connected")
             return
         end
 
-        debugMsg("self:connect setting readhandler")
+        debugMsg("self:connect() setting readhandler")
         -- callback when data is available for reading. Disables callback if fn is nil.
         tcp:SetReadHandler(msg_received)
 
-        debugMsg("self:connect setting write handler")
+        debugMsg("self:connect() setting write handler")
         -- set an internal call back for when the connection attempt completes
         tcp:SetWriteHandler(conHandler)
 
-        debugMsg("self:connect trying to connect to "..tostring(self['host'])..":"..tostring(self['port']))
+        debugMsg("self:connect() trying to connect to "..tostring(self['host'])..":"..tostring(self['port']))
         -- attempt to connect to host and port
         tcp:Connect(self['host'], self['port'])
     end
@@ -98,11 +98,11 @@ function TCP.client.new(args)
 
     -- disconnects the client
     function self:disconnect()
-        debugMsg("attempting to disconnect..")
+        debugMsg("self:disconnect() attempting to disconnect..")
         repeat
             tcp:Disconnect()
         until self:is_connected() == false
-        debugMsg("disconnected successfully")
+        debugMsg("self:disconnect() disconnected successfully")
 
         connected = false
         self:onDis()
@@ -113,7 +113,7 @@ function TCP.client.new(args)
     function self:is_connected()
         local peer = tcp:GetPeerName()
         if (peer ~= nil)then
-            debugMsg("is_connected says: still connected to peer "..peer)
+            debugMsg("self:is_connected() still connected to peer "..peer)
             return true
         else
             return false
@@ -150,7 +150,7 @@ function TCP.client.new(args)
     -- send a line to the connection
     function self:send(line)
         assert(type(line) == "string", "send is supposed to receive a string but instead got: "..type(line))
-        debugMsg("send method received - "..line)
+        debugMsg("self:send() received - "..line)
 
         -- if we got here but are not connected then
         -- the user forgot to connect or lost connection
@@ -193,11 +193,11 @@ function TCP.client.new(args)
 
     -- internal callback for when a message is received on the socket
     msg_received = function()
-        debugMsg("msg_received function reached")
+        debugMsg("self:msg_received()")
         -- evidently this this callback also gets triggered on new connections????
         -- so we'll short circuit that to be safew
         if not connected then
-            debugMsg("msg_recieved function triggered but no connection??")
+            debugMsg("self:msg_recieved triggered but no connection??")
             return
         end
         -- attempt to receive from socket
@@ -210,7 +210,7 @@ function TCP.client.new(args)
             in_buffer = in_buffer..msg or msg
         else
             if (errcode) then
-                debugMsg("caught error code on recv socket: "..errcode)
+                debugMsg("self:msg_received caught error code on recv socket: "..errcode)
 
                 -- fetch the error message from the socket
                 local err = tcp:GetSocketError()
@@ -244,36 +244,36 @@ function TCP.client.new(args)
     end
 
     -- conHandler() distinguishes between whether the callback signal is
-    -- the result of the asyncronous connect call completing 
+    -- the result of the asyncronous connect call completing
     -- this provides the user with an additional callback option for
     -- whether the connect failed or succeeded
     conHandler = function(errormsg)
-        debugMsg("in conHandler function")
-        debugMsg("conHandler connection status "..tostring(connected))
- 
+        debugMsg("conHandler()")
+        debugMsg("conHandler() connection status "..tostring(connected))
+
         -- if we don't think we are connected then
         -- this must be a new connection signal
         if not connected then
-                     
+
             -- lets see if we are indeed connected
             -- if so, then this is a newly established connection
             if self:is_connected() then
-                debugMsg("conHandler connected being set to true")
+                debugMsg("conHandler() connected being set to true")
                 connected = true
 
-                --- so lets send it to our buffered line writer 
+                --- so lets send it to our buffered line writer
                 write_line_from_out_buffer()
 
                 --- call the user's on_connect callback with nil for no errors
                 self:onCon(nil)
                 return
             else
-                debugMsg("conHandler connection confirmed false")
+                debugMsg("conHandler() connection confirmed false")
                 --- it appears the connection attempt failed
                 --- so we call the user's on_connect() call back but
                 --- we send any error message
-                
-                debugMsg("conHandler disconnecting underlying layer")
+
+                debugMsg("conHandler() disconnecting underlying layer")
                 --- we have to tell the underlying layer to disconnect because
                 --- it is not giving us any other way to stop the callbacks
                 --- otherwise it will spinout and lockup the game when the callback fires
@@ -284,7 +284,7 @@ function TCP.client.new(args)
         end
 
         if connected then
-            debugMsg("conHandler says we are already connected..sending write buffering")
+            debugMsg("conHandler() says we are already connected..sending write buffering")
             write_line_from_out_buffer()
         end
     end
@@ -296,7 +296,7 @@ function TCP.client.new(args)
         -- if we got here but are not connected then let's avoid
         -- an error on the underlying layer by bailing out now
         if not self:is_connected() then
-            debugMsg("write buffer called but not connected..")
+            debugMsg("write_line_from_out_buffer() called but not connected..")
             connected = false
             self:onDis()
             return
@@ -304,7 +304,7 @@ function TCP.client.new(args)
 
         -- check if the out_buffer is empty (no lines to send)
         if (not next(out_buffer) ) then
-            debugMsg ("out buffer is now empty")
+            debugMsg ("write_line_from_out_buffer() out buffer is now empty")
             -- nothing to send, we are done so let's
             -- remove the buffer check from the loop
             tcp:SetWriteHandler(nil)
@@ -318,13 +318,13 @@ function TCP.client.new(args)
         if  (chars_sent == -1) then
             local err = tcp:GetSocketError() or chars_sent
             -- could have been an EWOULDBLOCK but we can't tell
-            debugMsg("failed to send message with code: "..err)
+            debugMsg("write_line_from_out_buffer() failed to send message with code: "..err)
             -- schedule this function to try again when the the buffer is ready
             tcp:SetWriteHandler(write_line_from_out_buffer)
 
         -- if it sent the string but only sent a portion of it, we find out here
         elseif (chars_sent < string.len( out_buffer[1] ) ) then
-            debugMsg("sent partial string")
+            debugMsg("write_line_from_out_buffer() sent partial string")
             -- because only a portion of this line has been seent,
             -- we will remove the portion of the line that was sent and
             -- leave the rest to be sent when the loop comes back around
@@ -333,7 +333,7 @@ function TCP.client.new(args)
             -- schedule to try again when the the buffer is ready
             tcp:SetWriteHandler(write_line_from_out_buffer)
         else
-            debugMsg("successfuly sent - "..out_buffer[1])
+            debugMsg("write_line_from_out_buffer() successfuly sent - "..out_buffer[1])
 
             -- we land here because it appears the entire line was sent
             -- so lets remove that line from the top of the out buffer
