@@ -17,11 +17,14 @@ local client = TCP.client.new {
 ```
 where the host and port are required, there are also optional parameters that allows you to initialize everything at once with the following available parameters:
 ```
-debug    = <boolean>
-line_end = <string>
-onCon    = <function>
-onDis    = <function>
-onMsg    = <function>
+attemptsMax  = <number>   --- maximum number of times it will try to reconnect
+reconTime    = <number>   --- number of seconds before it attempts to reconnect
+onMessage    = <function> --- when message received
+onDisconnect = <function> --- when disconnected
+onConnect    = <function> --- when connected
+onReconnect  = <function> --- when a reconnect attempt starts-receives attempt number
+onGiveup     = <function> --- when all reconnect attempts are exhausted
+onFail       = <function> --- when a connection attempt fails
 ```
 for example:
 
@@ -29,13 +32,11 @@ for example:
 dofile("../TCP/client.lua")
 
 local client = TCP.client.new {
-    ['host']     = "111.11.111.11",
-    ['port']     = 1111,
-    ['debug']    = true,
-    ['line_end'] = "\n",
-    ['onCon']    = somefunction,
-    ['onDis']    = somefunction,
-    ['onMsg']    = somefunction
+    ['host']         = "111.11.111.11",
+    ['port']         = 1111,
+    ['onConnect']    = somefunction,
+    ['onDisconnect'] = somefunction,
+    ['onMessage']    = somefunction
 }
 ```
 
@@ -45,16 +46,15 @@ for example:
 dofile("../TCP/client.lua")
 
 local client = TCP.client.new()
-
-client:set_line_terminator("\n")
-client:on_connect(somefunction)
-client:on_disconnect(somefunction)
-client:on_message(somefunction)
+client['onConnect'] = somefunction
 ```
 now we can call the methods in our code to put it to work for us
 for example:
 ```lua
-client:connect(host,port)
-client:send("some message to send")
-client:disconnect()
+client:Connect(host,port)
+client:Send("some message to send")
+client:Disconnect()
 ```
+### Notes
+This library assumes the industry standard line ending of /r/n on incoming messages currently
+The Send() method does not append /r/n at the end of the string before sending it over the connection. This must be implemented by the user according to expected behaviour by the listener.
