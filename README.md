@@ -134,6 +134,12 @@ You can leave out callbacks you do not need.
 
 A failed connection calls `onError`. It does not call `onConnect`.
 
+## Try the small example
+
+The `simple` folder has a short plugin you can read and run. Copy `TCP` and `simple` into your game's `plugins` folder. No file names need to change.
+
+Start the test server with `perl examples/echo_server.pl`. In the game, type `/tcpsimple` to connect and send one message. Type `/tcpsimpleclose` to close it.
+
 ## Test it in the game
 
 The `test` folder is a full plugin. You do not need to rename any files.
