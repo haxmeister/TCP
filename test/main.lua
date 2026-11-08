@@ -34,7 +34,7 @@ function TCPTest.send(_, args)
     if not TCPTest.conn then return print('[TCP test] not initialized') end
     local text = table.concat(args or {}, ' ')
     local ok, err = TCPTest.conn:SendMessage(text)
-    if not ok then print('[TCP test] SendLine failed: ' .. tostring(err)) end
+    if not ok then print('[TCP test] SendMessage failed: ' .. tostring(err)) end
 end
 
 -- Send a 256 KiB payload without printing the payload into game chat.
