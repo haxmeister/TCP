@@ -23,7 +23,6 @@ local function clear_queue(self)
     self.queue = {}
     self.head, self.tail, self.offset = 1, 0, 1
     self.pendingBytes = 0
-    self.input = ''
 end
 
 local function stop(self, reason, is_error)
@@ -36,6 +35,7 @@ local function stop(self, reason, is_error)
     self.writeCallback = nil
     self.flushing = false
     clear_queue(self)
+    self.input = ''
     TCP.Client._active[self] = nil
 
     if socket then
@@ -133,6 +133,7 @@ function TCP.Client.New(options)
     assert(self.maxLineBytes > 0 and self.maxPendingBytes > 0 and self.writeBudget > 0,
            'buffer limits must be positive')
     clear_queue(self)
+    self.input = ''
 
     function self:Send(data)
         if self.state ~= 'connected' and self.state ~= 'connecting' then
@@ -170,6 +171,7 @@ function TCP.Client.New(options)
         self.socket = socket
         self.state = 'connecting'
         clear_queue(self)
+        self.input = ''
         TCP.Client._active[self] = true
 
         local function current()
