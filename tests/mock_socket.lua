@@ -72,7 +72,7 @@ third.error='connection refused';third.onWrite()
 eq(c.state,'disconnected');eq(#errors,1);eq(#disconnected,2);eq(third.disconnects,1)
 
 local data_seen
-local raw = make({mode='raw',onData=function(_,data) data_seen=data end})
+local raw = make({mode='raw',onData=function(data) data_seen=data end})
 local rs=sockets[#sockets]; rs:connected()
 rs.recv={{'\0\1x\n',nil}};rs.onRead();eq(data_seen,'\0\1x\n')
 raw:Disconnect()
