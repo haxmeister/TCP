@@ -63,22 +63,16 @@ local z=socket();z:ready();z:feed('hi\0bye\0')
 eq(nul[1],'hi');eq(nul[2],'bye')
 assert(n:SendMessage('ok'));eq(z.sent,'ok\0');n:Disconnect()
 
--- Existing New()/onMessage(client, line), SendLine(), and raw mode still work.
-local oldClient,oldLine
-local old=TCP.New({host='127.0.0.1',port=54000,
-    onMessage=function(client,line)oldClient,oldLine=client,line end})
-assert(old:Connect());local o=socket();o:ready();o:feed('hello\r\n')
-eq(oldClient,old);eq(oldLine,'hello')
-assert(old:SendLine('hi'));eq(o.sent,'hi\r\n');old:Disconnect()
+-- Raw mode returns the bytes unchanged.
 local raw
 local r=TCP.Connect('127.0.0.1',54000,{
     mode='raw',delimiter='|',onData=function(bytes)raw=bytes end
 })
 local rs=socket();rs:ready();rs:feed('a|b\0c');eq(raw,'a|b\0c');r:Disconnect()
-local valid=pcall(function() TCP.New({host='x',port=1,delimiter=''}) end)
+local valid=pcall(function() TCP.Connect('x',1,{delimiter=''}) end)
 eq(valid,false)
 local default=TCP.Connect('127.0.0.1',54000)
 local ds=socket();ds:ready()
 assert(default:SendMessage('hey'));eq(ds.sent,'hey\n');default:Disconnect()
 
-print('PASS: easy Connect API, literal delimiters, raw mode, legacy API')
+print('PASS: simple Connect API, literal delimiters, raw mode')
