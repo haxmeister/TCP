@@ -4,8 +4,7 @@
 -- The native TCPSocket interface was documented by Andy Sloane (a1k0n).
 
 TCP = TCP or {}
-TCP.Client = TCP.Client or {}
-TCP.Client._active = TCP.Client._active or {} -- prevent active sockets from being collected
+TCP._active = TCP._active or {} -- keep connected sockets alive
 
 local function report(message)
     local text = '[TCP] ' .. tostring(message)
@@ -15,7 +14,7 @@ end
 local function notify(self, name, ...)
     local callback = self[name]
     if type(callback) ~= 'function' then return end
-    local ok, err = pcall(callback, self, ...)
+    local ok, err = pcall(callback, ...)
     if not ok then report(name .. ' callback failed: ' .. tostring(err)) end
 end
 
@@ -44,7 +43,7 @@ local function stop(self, reason, is_error)
     self.flushing = false
     clear_queue(self)
     self.input = ''
-    TCP.Client._active[self] = nil
+    TCP._active[self] = nil
 
     if socket then
         pcall(function() socket:SetReadHandler(nil) end)
@@ -130,51 +129,45 @@ local function received(self, data, generation)
         if not position then break end
         local message = string.sub(self.input, 1, position - 1)
         self.input = string.sub(self.input, position + #self.delimiter)
-        -- Keep the old behavior of treating CRLF as one text-line ending.
-        if self.delimiter == '\n' and string.sub(message, -1) == '\r' then
-            message = string.sub(message, 1, -2)
-        end
-        if #message > self.maxLineBytes then
-            stop(self, 'received message exceeds maxLineBytes', true)
+        if #message > self.maxMessageBytes then
+            stop(self, 'received message exceeds maxMessageBytes', true)
             return
         end
-        notify(self, 'onLine', message)
+        notify(self, 'onMessage', message)
     end
     if self.state == 'connected' and self.generation == generation then
         local payload = pending_message_bytes(self.input, self.delimiter)
-        if self.delimiter == '\n' and string.sub(self.input, -1) == '\r' then
-            -- Permit a final CR until we know whether LF follows it.
-            payload = payload - 1
-        end
-        if payload > self.maxLineBytes then
-            stop(self, 'received message exceeds maxLineBytes', true)
+        if payload > self.maxMessageBytes then
+            stop(self, 'received message exceeds maxMessageBytes', true)
         end
     end
 end
 
-function TCP.Client.New(options)
-    assert(type(options) == 'table', 'TCP.Client.New expects an options table')
-    assert(type(options.host) == 'string', 'host must be a string')
-    assert(type(options.port) == 'number', 'port must be a number')
+function TCP.Connect(host, port, options)
+    if options == nil then options = {} end
+    assert(type(options) == 'table', 'options must be a table')
+    assert(type(host) == 'string' and #host > 0, 'host must be a non-empty string')
+    assert(type(port) == 'number' and port >= 1 and port <= 65535
+           and port % 1 == 0, 'port must be an integer from 1 to 65535')
     local self = {
-        host = options.host, port = options.port,
-        mode = options.mode or 'line',
+        host = host, port = port,
+        mode = options.mode or 'message',
         delimiter = options.delimiter or '\n',
         onConnect = options.onConnect,
         onDisconnect = options.onDisconnect,
         onError = options.onError,
-        onLine = options.onLine or options.onMessage,
+        onMessage = options.onMessage,
         onData = options.onData,
-        maxLineBytes = options.maxLineBytes or 65536,
+        maxMessageBytes = options.maxMessageBytes or 65536,
         maxPendingBytes = options.maxPendingBytes or 1048576,
         writeBudget = options.writeBudget or 65536,
         state = 'disconnected', generation = 0,
         flushing = false, socket = nil
     }
-    assert(self.mode == 'line' or self.mode == 'raw', 'mode must be line or raw')
+    assert(self.mode == 'message' or self.mode == 'raw', 'mode must be message or raw')
     assert(type(self.delimiter) == 'string' and #self.delimiter > 0,
            'delimiter must be a non-empty string')
-    assert(self.maxLineBytes > 0 and self.maxPendingBytes > 0 and self.writeBudget > 0,
+    assert(self.maxMessageBytes > 0 and self.maxPendingBytes > 0 and self.writeBudget > 0,
            'buffer limits must be positive')
     clear_queue(self)
     self.input = ''
@@ -204,21 +197,11 @@ function TCP.Client.New(options)
         return self:Send(message .. self.delimiter)
     end
 
-    function self:SendLine(line)
-        if type(line) ~= 'string' then return nil, 'SendLine expects a string' end
-        if string.find(line, '\n', 1, true) then return nil, 'line contains newline' end
-        return self:Send(line .. '\r\n')
-    end
-
     function self:Disconnect()
         stop(self, 'local disconnect', false)
     end
 
-    function self:Connect(host, port)
-        if host ~= nil then assert(type(host) == 'string', 'host must be a string') end
-        if port ~= nil then assert(type(port) == 'number', 'port must be a number') end
-        if host ~= nil then self.host = host end
-        if port ~= nil then self.port = port end
+    function self:Reconnect()
         if self.state ~= 'disconnected' then
             local previous_generation = self.generation
             stop(self, 'replaced', false)
@@ -235,7 +218,7 @@ function TCP.Client.New(options)
         self.state = 'connecting'
         clear_queue(self)
         self.input = ''
-        TCP.Client._active[self] = true
+        TCP._active[self] = true
 
         local function current()
             return self.generation == generation and self.socket == socket
@@ -246,7 +229,7 @@ function TCP.Client.New(options)
             if not ok then
                 stop(self, 'receive failed: ' .. tostring(data), true)
             elseif data == nil then
-                -- Old VO API reports nil,nil for 'nothing available'.
+                -- The socket may return nil,nil when no data is ready.
                 -- EAGAIN/WOULDBLOCK may also appear as numeric errno.
                 if err == 0 then
                     stop(self, 'peer closed connection', false)
@@ -284,41 +267,9 @@ function TCP.Client.New(options)
         return true -- connect *started*, not yet completed
     end
 
+    local ok, err = self:Reconnect()
+    if not ok then return nil, err end
     return self
 end
 
--- Simple API: connect in one call. Callbacks take just the message or reason.
--- New(options) and conn:Connect() keep the older callback form.
-function TCP.Client.Connect(host, port, options)
-    if options == nil then options = {} end
-    assert(type(options) == 'table', 'options must be a table')
-    local config = {}
-    for key, value in pairs(options) do config[key] = value end
-    config.host, config.port = host, port
-
-    if type(options.onMessage) == 'function' then
-        config.onLine = function(_, message) return options.onMessage(message) end
-        config.onMessage = nil
-    elseif type(options.onLine) == 'function' then
-        config.onLine = function(_, message) return options.onLine(message) end
-    end
-    if type(options.onData) == 'function' then
-        config.onData = function(_, data) return options.onData(data) end
-    end
-    if type(options.onConnect) == 'function' then
-        config.onConnect = function() return options.onConnect() end
-    end
-    if type(options.onDisconnect) == 'function' then
-        config.onDisconnect = function(_, reason) return options.onDisconnect(reason) end
-    end
-    if type(options.onError) == 'function' then
-        config.onError = function(_, reason) return options.onError(reason) end
-    end
-
-    local client = TCP.Client.New(config)
-    local ok, err = client:Connect()
-    if not ok then return nil, err end
-    return client
-end
-
-return TCP.Client
+return TCP
