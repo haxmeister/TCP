@@ -27,11 +27,10 @@ function TCPSocket()
     sockets[#sockets+1] = sock
     return sock
 end
-local Client = dofile('TCP/client.lua')
+local TCP = dofile('TCP/client.lua')
 local function make(opts)
     opts = opts or {}
-    opts.host, opts.port = '127.0.0.1', 54000
-    return Client.New(opts)
+    return TCP.Connect('127.0.0.1', 54000, opts)
 end
 local function eq(actual, expected)
     assert(actual == expected, 'got ' .. tostring(actual) .. ' expected ' .. tostring(expected))
@@ -39,63 +38,62 @@ end
 
 local connected, lines, disconnected, errors = 0, {}, {}, {}
 local c = make({onConnect=function() connected=connected+1 end,
- onLine=function(_,line) lines[#lines+1]=line end,
- onDisconnect=function(_,why) disconnected[#disconnected+1]=why end,
- onError=function(_,err) errors[#errors+1]=err end})
-assert(c:Connect()); eq(c.state,'connecting')
-assert(c:SendLine('hello'))
+ onMessage=function(line) lines[#lines+1]=line end,
+ onDisconnect=function(why) disconnected[#disconnected+1]=why end,
+ onError=function(err) errors[#errors+1]=err end})
+eq(c.state,'connecting')
+assert(c:SendMessage('hello'))
 local first=sockets[#sockets]
 first:connected(); eq(c.state,'connected'); eq(connected,1)
-eq(table.concat(first.sent),'hello\r\n'); eq(c.pendingBytes,0)
+eq(table.concat(first.sent),'hello\n'); eq(c.pendingBytes,0)
 first.recv={{'ab',nil}}; first.onRead(); eq(#lines,0)
-first.recv={{'c\r\nnext\npartial',nil}}; first.onRead(); eq(#lines,2);eq(lines[1],'abc');eq(lines[2],'next')
+first.recv={{'c\nnext\npartial',nil}}; first.onRead(); eq(#lines,2);eq(lines[1],'abc');eq(lines[2],'next')
 assert(c:Send('ping')); eq(c.input,'partial')
 first.recv={{' end\n',nil}}; first.onRead(); eq(lines[3],'partial end')
 first.sends={2,-1,3}
 assert(c:Send('12345'));eq(c.pendingBytes,3)
 assert(first.onWrite); first.onWrite();eq(c.pendingBytes,3)
 first.onWrite();eq(c.pendingBytes,0)
-eq(table.concat(first.sent),'hello\r\nping12345')
+eq(table.concat(first.sent),'hello\nping12345')
 
 local stale_read = first.onRead
 local stale_write = c.writeCallback
 c:Disconnect();eq(first.disconnects,1);eq(c.state,'disconnected');eq(#disconnected,1)
-assert(c:Connect())
+assert(c:Reconnect())
 local second=sockets[#sockets]
 stale_read();stale_write();eq(c.state,'connecting')
 second:connected();eq(c.state,'connected');eq(connected,2)
-assert(c:SendLine('again'));eq(table.concat(second.sent),'again\r\n')
+assert(c:SendMessage('again'));eq(table.concat(second.sent),'again\n')
 c:Disconnect();eq(second.disconnects,1);eq(#disconnected,2)
 
-assert(c:Connect())
+assert(c:Reconnect())
 local third=sockets[#sockets]
 third.error='connection refused';third.onWrite()
 eq(c.state,'disconnected');eq(#errors,1);eq(#disconnected,2);eq(third.disconnects,1)
 
 local data_seen
-local raw = make({mode='raw',onData=function(_,data) data_seen=data end})
-raw:Connect(); local rs=sockets[#sockets]; rs:connected()
+local raw = make({mode='raw',onData=function(data) data_seen=data end})
+local rs=sockets[#sockets]; rs:connected()
 rs.recv={{'\0\1x\n',nil}};rs.onRead();eq(data_seen,'\0\1x\n')
 raw:Disconnect()
 
 local overflow_error
-local small = make({maxLineBytes=3,onError=function(_,e) overflow_error=e end})
-small:Connect();local ss=sockets[#sockets];ss:connected();ss.recv={{'1234',nil}};ss.onRead()
-eq(small.state,'disconnected');assert(overflow_error:find('maxLineBytes',1,true))
+local small = make({maxMessageBytes=3,onError=function(e) overflow_error=e end})
+local ss=sockets[#sockets];ss:connected();ss.recv={{'1234',nil}};ss.onRead()
+eq(small.state,'disconnected');assert(overflow_error:find('maxMessageBytes',1,true))
 
-local bad = make({onLine=function() error('expected test failure') end})
-bad:Connect();local bs=sockets[#sockets];bs:connected();bs.recv={{'line\n',nil}};bs.onRead()
+local bad = make({onMessage=function() error('expected test failure') end})
+local bs=sockets[#sockets];bs:connected();bs.recv={{'line\n',nil}};bs.onRead()
 eq(bad.state,'connected');assert(#logs>0)
 bad:Disconnect()
 
 local eof = make()
-eof:Connect();local es=sockets[#sockets];es:connected();es.recv={{'',nil}};es.onRead();eq(eof.state,'disconnected')
+local es=sockets[#sockets];es:connected();es.recv={{'',nil}};es.onRead();eq(eof.state,'disconnected')
 local closed_count, closed_reason, close_errors = 0, nil, 0
 local clean = make({
-    onDisconnect = function(_, reason) closed_count=closed_count+1; closed_reason=reason end,
+    onDisconnect = function(reason) closed_count=closed_count+1; closed_reason=reason end,
     onError = function() close_errors=close_errors+1 end
 })
-clean:Connect()
 local cs=sockets[#sockets];cs:connected()
 cs.recv={{nil, 0}};cs.onRead()
 eq(clean.state,'disconnected')

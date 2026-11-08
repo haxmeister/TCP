@@ -1,84 +1,177 @@
 # TCP for Vendetta Online
 
-A small, nonblocking TCP client wrapper for Vendetta Online plugins. It uses the game's native `TCPSocket` directly. No LuaSocket, metatables, or background threads are required.
+TCP lets a Vendetta Online plugin send and receive data over a network.
 
-The goal is to make socket connections **predictable**: explicit connect and disconnect, proper partial-write buffering, complete incoming lines, and clear callbacks. This is a replacement for the earlier implementation, **not a drop-in compatibility release**.
+It handles partial sends, incoming messages, and socket cleanup. It uses the game's built-in `TCPSocket`.
 
 ## Install
 
-To run the included test, copy the **`TCP` and `test` directories directly from this repository** into Vendetta Online's `plugins` directory. No renaming or editing is required:
+Copy the `TCP` folder into the game's `plugins` folder. Keep it next to your plugin:
 
 ```text
 plugins/
 ├── TCP/
 │   └── client.lua
-└── test/
+└── myplugin/
     └── main.lua
 ```
 
-When VO loads `test/main.lua` on startup, `dofile()` resolves relative to that plugin's directory. Other plugins can use the shared library using the sibling directory path:
+In your plugin, load it like this:
 
 ```lua
-local TCPClient = dofile('../TCP/client.lua')
+local TCP = dofile("../TCP/client.lua")
+```
 
-local conn = TCPClient.New({
-    host = '127.0.0.1',
-    port = 54000,
-    onConnect = function(client)
-        print('Connected!')
-        client:SendLine('hello')
+## Connect
+
+```lua
+local TCP = dofile("../TCP/client.lua")
+
+local conn = TCP.Connect("127.0.0.1", 54000, {
+    onConnect = function()
+        print("Connected!")
     end,
-    onLine = function(client, line)
-        print('Received: ' .. line)
+
+    onMessage = function(message)
+        print("Received: " .. message)
     end,
-    onDisconnect = function(client, reason)
-        print('Disconnected: ' .. reason)
-    end,
-    onError = function(client, reason)
-        print('TCP error: ' .. reason)
+
+    onError = function(reason)
+        print("Error: " .. reason)
     end
 })
 
-conn:Connect()      -- starts async connect; onConnect runs when established
--- conn:SendLine('hi')
--- conn:Send('raw bytes')
--- conn:Disconnect() -- explicitly closes the native socket
+if conn then
+    conn:SendMessage("Hello!")
+end
 ```
 
-## Contract
+`TCP.Connect()` starts a connection and returns a client. The connection may still be starting. Your `onConnect` function runs when it is ready.
 
-- `New(options)` requires `host` (string) and `port` (number). It **does not** connect automatically.
-- `Connect([host, port])` returns `true` if the **asynchronous attempt started**. A successful connection is announced only by `onConnect(client)`.
-- `Send(data)` queues *exact bytes*, with no newline added. `SendLine(line)` adds CRLF. Both return `true` if accepted into the queue, or `nil, reason`.
-- Incoming `line` mode (default) buffers data until LF, stripping one trailing CR; `onLine(client, line)` fires for each complete line. `onMessage` is accepted as an alias for `onLine` when migrating old code.
-- `mode = 'raw'` uses `onData(client, chunk)` instead, preserving binary bytes. **TCP chunks are not application messages**; your protocol must define its own framing.
-- `Disconnect()` calls VO's native `TCPSocket:Disconnect()`, disables handlers, drops queued bytes, and ignores callbacks from replaced sockets.
-- `onError(client, reason)` handles connection/transport errors. `onDisconnect(client, reason)` fires once when an **established** connection closes, including manual close. A failed connection attempt only calls `onError`.
-- No automatic reconnect yet. Call `Connect()` again when appropriate; the old connection is explicitly disconnected first.
-- `state` is `'disconnected'`, `'connecting'`, or `'connected'`. `pendingBytes` shows queued bytes.
-- Optional limits: `maxPendingBytes` (default 1048576), `maxLineBytes` (default 65536 decoded bytes per line, excluding CRLF), `writeBudget` (default 65536 bytes per flush). When the queue is full, `Send()` rejects the entire new write instead of dropping part of it.
+You can queue a message before the connection is ready. TCP will send it when it can.
 
-Callbacks are invoked safely; callback errors are written to VO's log (or `print` when `log_print` is unavailable). They are not silently swallowed.
+## Send and close
 
-## Try it in Vendetta
+```lua
+conn:SendMessage("Hello!")  -- Adds the chosen delimiter
+conn:Send("Hello!")         -- Sends these exact bytes
+conn:Disconnect()           -- Closes the socket
+```
 
-Run `perl examples/echo_server.pl` from a terminal at the root of this repository. Copy the repository's ready-made **`TCP/`** and **`test/`** folders straight into Vendetta's `plugins/` folder; `test/main.lua` already contains the correct `dofile('../TCP/client.lua')` line. Restart or reload the game interface. In-game commands:
+`SendMessage()` and `Send()` return `true` when TCP accepts the data. If they cannot accept it, they return `nil, reason`.
 
-- `/tcptestconnect` — open a connection
-- `/tcptestsend hello` — send a line
-- `/tcptestclose` — explicitly disconnect
-- `/tcptestreconnect` — replace connection, checking for duplicates server-side
-- `/tcpteststress` — send 256 KiB; expect `stress ok 262144` from the server
-- `/tcptestlimits` — verify an 8-byte queue accepts 8 bytes and rejects byte 9
+To reconnect the same client after a disconnect, use:
 
-The echo server reports active connections and sends multiple lines to test buffering. It accepts a `STRESS 262144` header followed by exactly 262144 bytes, then sends an acknowledgment. Basic connect/send/receive, rapid reconnect without observed server-side overlap, clean peer closure, and refused connection were observed in the November 2026 Linux VO client. The `/tcpteststress` and `/tcptestlimits` commands also passed in the live Linux VO client: the server acknowledged 262144 bytes and the client correctly rejected the ninth byte of an eight-byte pending queue. Forced native partial writes under congestion remain unverified in-game; the mock edge-case tests exercise the code paths deterministically.
+```lua
+conn:Reconnect()
+```
 
-**Path note:** the relative path shown above is for a plugin loaded normally from `plugins/test/main.lua`. If running `dofile()` manually in the game console, the working directory may differ; console examples often use `plugins/TCP/client.lua` instead.
+Calling `Reconnect()` while connected closes the current socket before starting a new one. TCP does not reconnect by itself.
 
-For automated checks outside Vendetta, run `lua tests/mock_socket.lua` and `lua tests/edge_cases.lua` from the repository root. These simulate partial sends, would-block, queue and line limits, and callback reentrancy, but do **not** prove native VO behavior under congestion. Syntax-check the Perl server with `perl -c examples/echo_server.pl`.
+## Choose a message delimiter
 
-## Scope and credits
+A **delimiter** marks the end of a message. The default is `"\n"` (a new line).
 
-This is a TCP transport wrapper, **not TLS or MySQL**. A localhost TLS gateway could be built on top later.
+Choose one when you connect:
 
-Original VO `TCPSocket` API and early Lua wrapper by Andy Sloane (a1k0n). Repository's original implementation by Joshua S. Day (haxmeister), 2022. MIT license; see `LICENSE`.
+```lua
+local conn = TCP.Connect("127.0.0.1", 54000, {
+    delimiter = "\r\n",
+    onMessage = function(message)
+        print(message)
+    end
+})
+```
+
+You can also use `"\0"`, `"|"`, or a longer string such as `"\r\n\r\n"`.
+
+TCP treats the delimiter as exact bytes, not a Lua pattern. It waits for the full delimiter, even if the bytes arrive in separate reads.
+
+`onMessage(message)` receives each complete message **without the delimiter**. If you choose `"\n"`, a `"\r"` before it stays in the message. Choose `"\r\n"` if that is what your server uses.
+
+`SendMessage()` adds the same delimiter when sending. It rejects a message that already contains the delimiter.
+
+## Receive raw bytes
+
+If you do not want messages split by a delimiter, use raw mode:
+
+```lua
+local conn = TCP.Connect("127.0.0.1", 54000, {
+    mode = "raw",
+
+    onData = function(data)
+        print("Got " .. #data .. " bytes")
+    end
+})
+```
+
+Raw mode sends each chunk of received data to `onData(data)`. It does not call `onMessage()`.
+
+A chunk may contain part of one message or parts of many messages. TCP does not choose those boundaries.
+
+`Send()` works the same way in both modes.
+
+## Callbacks
+
+| Callback | What it does |
+| --- | --- |
+| `onConnect()` | Runs when connected |
+| `onMessage(message)` | Gives you one complete message |
+| `onData(data)` | Gives you raw bytes in raw mode |
+| `onDisconnect(reason)` | Runs when an open connection closes |
+| `onError(reason)` | Reports a connection or socket error |
+
+You can leave out any callback you do not need.
+
+If a connection fails to start right away, `TCP.Connect()` returns `nil, reason`. It also calls `onError(reason)`.
+
+## Ready-to-use examples
+
+The `simple` folder is a small plugin you can read and run. The `test` folder checks more parts of the TCP client.
+
+Copy `TCP` and either `simple` or `test` into your game's `plugins` folder. The folders already have their `main.lua` files.
+
+From this repo, start the local test server. It listens on port 54000 for the main tests and 54001 for the delimiter test:
+
+```sh
+perl examples/echo_server.pl
+```
+
+Then, in Vendetta Online, type `/tcpsimple` to try the small example. Type `/tcpsimpleclose` to close it.
+
+The test plugin has these commands:
+
+- `/tcptestconnect` — Connect
+- `/tcptestsend hello` — Send a message
+- `/tcptestreconnect` — Replace the connection
+- `/tcptestclose` — Close the connection
+- `/tcpteststress` — Send 256 KiB and check the reply
+- `/tcptestlimits` — Check the send queue limit
+- `/tcptestdelimiter` — Test the `||` message delimiter on port 54001
+
+## Limits
+
+A message can hold up to 65,536 bytes by default. The send queue can hold up to 1 MiB.
+
+You can set `maxMessageBytes`, `maxPendingBytes`, and `writeBudget` in the options table if needed.
+
+TCP sends data over a plain connection. Do not send private information to servers you do not trust.
+
+## Tests for developers
+
+Run these commands from the repo folder:
+
+```sh
+texlua tests/mock_socket.lua
+texlua tests/edge_cases.lua
+texlua tests/delimiters.lua
+perl -c examples/echo_server.pl
+```
+
+The Lua tests use a fake socket. Test new changes in Vendetta Online too.
+
+## Credits and license
+
+The Vendetta Online TCP socket API and early Lua examples were written by Andy Sloane (a1k0n). This repo was started by Joshua S. Day (haxmeister).
+
+This project uses the MIT license. See [LICENSE](LICENSE).

@@ -37,11 +37,10 @@ function TCPSocket()
     return sock
 end
 
-local Client = dofile('TCP/client.lua')
+local TCP = dofile('TCP/client.lua')
 local function new(opts)
     opts = opts or {}
-    opts.host, opts.port = '127.0.0.1', 54000
-    return Client.New(opts)
+    return TCP.Connect('127.0.0.1', 54000, opts)
 end
 local function eq(actual, expected, label)
     assert(actual == expected, (label or '') .. ': expected ' .. tostring(expected)
@@ -51,7 +50,7 @@ local function latest() return sockets[#sockets] end
 
 -- Small write budget must preserve every byte over many write-ready callbacks.
 local budget = new({writeBudget = 3})
-assert(budget:Connect())
+
 local b = latest(); b:establish()
 assert(budget:Send('abcdefghij'))
 eq(b.output, 'abc', 'first flush')
@@ -65,7 +64,7 @@ budget:Disconnect(); eq(b.closed, 1)
 
 -- Partial send followed by would-block and eventual completion.
 local partial = new()
-assert(partial:Connect())
+
 local p = latest(); p:establish()
 p.writes = {2, -1, 4}
 p.send_error = 'EWOULDBLOCK'
@@ -77,7 +76,7 @@ partial:Disconnect()
 
 -- The pending-byte limit must not accept a partial new application write.
 local limited = new({maxPendingBytes = 8, writeBudget = 2})
-assert(limited:Connect())
+
 local l = latest()
 assert(limited:Send('12345678'))
 local accepted, reason = limited:Send('9')
@@ -97,10 +96,10 @@ limited:Disconnect()
 -- A hard send error must close, rather than looping on writable callbacks.
 local hard_errors, hard_disconnects = {}, 0
 local broken = new({
-    onError = function(_, reason) hard_errors[#hard_errors + 1] = reason end,
+    onError = function(reason) hard_errors[#hard_errors + 1] = reason end,
     onDisconnect = function() hard_disconnects = hard_disconnects + 1 end,
 })
-assert(broken:Connect())
+
 local h = latest(); h:establish()
 h.writes = {-1}; h.send_error = 'Broken pipe'
 assert(broken:Send('X'))
@@ -110,7 +109,7 @@ eq(hard_disconnects, 1); eq(h.closed, 1)
 
 -- A string-valued 'would block' receive error is not a disconnect.
 local would = new()
-assert(would:Connect()); local w = latest(); w:establish()
+local w = latest(); w:establish()
 w.read_queue = {{nil, 'EWOULDBLOCK'}}
 w.on_read(); eq(would.state, 'connected')
 would:Disconnect()
@@ -118,14 +117,14 @@ would:Disconnect()
 -- Reentrant onDisconnect may reconnect; the outer Connect must not leak
 -- a third native socket.
 local reentries = 0
-local reentrant = new({onDisconnect = function(self)
+local reentrant
+reentrant = new({onDisconnect = function()
     reentries = reentries + 1
-    assert(self:Connect())
+    assert(reentrant:Reconnect())
 end})
-assert(reentrant:Connect())
 local old = latest(); old:establish()
 local count_before = #sockets
-local ok, why = reentrant:Connect()
+local ok, why = reentrant:Reconnect()
 eq(ok, nil)
 eq(why, 'connection changed during onDisconnect')
 eq(reentries, 1)
@@ -137,10 +136,10 @@ reentrant:Disconnect()
 
 -- Old handlers cannot deliver messages after an active socket is replaced.
 local messages = {}
-local switched = new({onLine = function(_, line) messages[#messages+1] = line end})
-assert(switched:Connect()); local stale = latest(); stale:establish()
+local switched = new({onMessage = function(line) messages[#messages+1] = line end})
+; local stale = latest(); stale:establish()
 local stale_read = stale.on_read
-assert(switched:Connect()); local fresh = latest(); fresh:establish()
+assert(switched:Reconnect()); local fresh = latest(); fresh:establish()
 stale.read_queue = {{'old\n', nil}}
 stale_read(); eq(#messages, 0)
 fresh.read_queue = {{'new\n', nil}}
@@ -150,11 +149,11 @@ switched:Disconnect()
 -- The length limit excludes CRLF. CR and LF may arrive separately.
 local bounded_lines, bounded_errors = {}, {}
 local framed = new({
-    maxLineBytes = 3,
-    onLine = function(_, line) bounded_lines[#bounded_lines + 1] = line end,
-    onError = function(_, err) bounded_errors[#bounded_errors + 1] = err end
+    maxMessageBytes = 3, delimiter = '\r\n',
+    onMessage = function(line) bounded_lines[#bounded_lines + 1] = line end,
+    onError = function(err) bounded_errors[#bounded_errors + 1] = err end
 })
-assert(framed:Connect()); local f = latest(); f:establish()
+; local f = latest(); f:establish()
 f.read_queue = {{'abc\r', nil}}
 f.on_read(); eq(framed.state, 'connected'); eq(#bounded_lines, 0)
 f.read_queue = {{'\n', nil}}
