@@ -131,7 +131,7 @@ The `simple` folder is a small plugin you can read and run. The `test` folder ch
 
 Copy `TCP` and either `simple` or `test` into your game's `plugins` folder. The folders already have their `main.lua` files.
 
-From this repo, start the local test server:
+From this repo, start the local test server. It listens on port 54000 for the main tests and 54001 for the delimiter test:
 
 ```sh
 perl examples/echo_server.pl
@@ -147,6 +147,7 @@ The test plugin has these commands:
 - `/tcptestclose` — Close the connection
 - `/tcpteststress` — Send 256 KiB and check the reply
 - `/tcptestlimits` — Check the send queue limit
+- `/tcptestdelimiter` — Test the `||` message delimiter on port 54001
 
 ## Limits
 
