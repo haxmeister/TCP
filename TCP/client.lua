@@ -185,11 +185,13 @@ function TCP.Client.New(options)
             elseif data == nil then
                 -- Old VO API reports nil,nil for 'nothing available'.
                 -- EAGAIN/WOULDBLOCK may also appear as numeric errno.
-                if err ~= nil and err ~= 11 and err ~= 35 and err ~= 10035 then
-                    stop(self, 'receive ended: ' .. tostring(err), err ~= 0)
+                if err == 0 then
+                    stop(self, 'peer closed connection', false)
+                elseif err ~= nil and err ~= 11 and err ~= 35 and err ~= 10035 then
+                    stop(self, 'receive failed: ' .. tostring(err), true)
                 end
             elseif data == '' then
-                stop(self, 'peer closed', false) -- confirm EOF behavior in VO
+                stop(self, 'peer closed connection', false)
             else
                 received(self, data, generation)
             end
