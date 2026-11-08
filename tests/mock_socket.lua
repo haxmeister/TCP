@@ -90,4 +90,16 @@ bad:Disconnect()
 
 local eof = make()
 eof:Connect();local es=sockets[#sockets];es:connected();es.recv={{'',nil}};es.onRead();eq(eof.state,'disconnected')
+local closed_count, closed_reason, close_errors = 0, nil, 0
+local clean = make({
+    onDisconnect = function(_, reason) closed_count=closed_count+1; closed_reason=reason end,
+    onError = function() close_errors=close_errors+1 end
+})
+clean:Connect()
+local cs=sockets[#sockets];cs:connected()
+cs.recv={{nil, 0}};cs.onRead()
+eq(clean.state,'disconnected')
+eq(closed_count,1);eq(closed_reason,'peer closed connection');eq(close_errors,0)
+eq(cs.disconnects,1)
+
 print('PASS: mocked VO socket transport, reconnect, lines, raw, bounds and errors')
