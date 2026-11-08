@@ -106,6 +106,19 @@ local function flush(self)
     end
 end
 
+-- Do not count the start of an unfinished delimiter as message data.
+-- Example: "hello\r" has 5 message bytes when delimiter is "\r\n".
+local function pending_message_bytes(input, delimiter)
+    local overlap = 0
+    local longest = math.min(#input, #delimiter - 1)
+    for size = 1, longest do
+        if string.sub(input, -size) == string.sub(delimiter, 1, size) then
+            overlap = size
+        end
+    end
+    return #input - overlap
+end
+
 local function received(self, data, generation)
     if self.mode == 'raw' then
         notify(self, 'onData', data)
@@ -113,25 +126,28 @@ local function received(self, data, generation)
     end
     self.input = self.input .. data
     while self.state == 'connected' and self.generation == generation do
-        local newline = string.find(self.input, '\n', 1, true)
-        if not newline then break end
-        local line = string.sub(self.input, 1, newline - 1)
-        self.input = string.sub(self.input, newline + 1)
-        if string.sub(line, -1) == '\r' then line = string.sub(line, 1, -2) end
-        if #line > self.maxLineBytes then
-            stop(self, 'received line exceeds maxLineBytes', true)
+        local position = string.find(self.input, self.delimiter, 1, true)
+        if not position then break end
+        local message = string.sub(self.input, 1, position - 1)
+        self.input = string.sub(self.input, position + #self.delimiter)
+        -- Keep the old behavior of treating CRLF as one text-line ending.
+        if self.delimiter == '\n' and string.sub(message, -1) == '\r' then
+            message = string.sub(message, 1, -2)
+        end
+        if #message > self.maxLineBytes then
+            stop(self, 'received message exceeds maxLineBytes', true)
             return
         end
-        notify(self, 'onLine', line)
+        notify(self, 'onLine', message)
     end
-    -- A trailing CR may be followed by LF in the next read.
-    -- maxLineBytes limits the decoded line, not its CRLF terminator.
     if self.state == 'connected' and self.generation == generation then
-        local pending = #self.input
-        if pending > self.maxLineBytes and not
-           (pending == self.maxLineBytes + 1 and
-            string.sub(self.input, -1) == '\r') then
-            stop(self, 'received line exceeds maxLineBytes', true)
+        local payload = pending_message_bytes(self.input, self.delimiter)
+        if self.delimiter == '\n' and string.sub(self.input, -1) == '\r' then
+            -- Permit a final CR until we know whether LF follows it.
+            payload = payload - 1
+        end
+        if payload > self.maxLineBytes then
+            stop(self, 'received message exceeds maxLineBytes', true)
         end
     end
 end
@@ -143,6 +159,7 @@ function TCP.Client.New(options)
     local self = {
         host = options.host, port = options.port,
         mode = options.mode or 'line',
+        delimiter = options.delimiter or '\n',
         onConnect = options.onConnect,
         onDisconnect = options.onDisconnect,
         onError = options.onError,
@@ -155,6 +172,8 @@ function TCP.Client.New(options)
         flushing = false, socket = nil
     }
     assert(self.mode == 'line' or self.mode == 'raw', 'mode must be line or raw')
+    assert(type(self.delimiter) == 'string' and #self.delimiter > 0,
+           'delimiter must be a non-empty string')
     assert(self.maxLineBytes > 0 and self.maxPendingBytes > 0 and self.writeBudget > 0,
            'buffer limits must be positive')
     clear_queue(self)
@@ -174,6 +193,15 @@ function TCP.Client.New(options)
         self.pendingBytes = self.pendingBytes + #data
         if self.state == 'connected' then flush(self) end
         return true
+    end
+
+    -- Send one message with the chosen delimiter.
+    function self:SendMessage(message)
+        if type(message) ~= 'string' then return nil, 'SendMessage expects a string' end
+        if string.find(message, self.delimiter, 1, true) then
+            return nil, 'message contains delimiter'
+        end
+        return self:Send(message .. self.delimiter)
     end
 
     function self:SendLine(line)
@@ -257,6 +285,40 @@ function TCP.Client.New(options)
     end
 
     return self
+end
+
+-- Simple API: connect in one call. Callbacks take just the message or reason.
+-- New(options) and conn:Connect() keep the older callback form.
+function TCP.Client.Connect(host, port, options)
+    if options == nil then options = {} end
+    assert(type(options) == 'table', 'options must be a table')
+    local config = {}
+    for key, value in pairs(options) do config[key] = value end
+    config.host, config.port = host, port
+
+    if type(options.onMessage) == 'function' then
+        config.onLine = function(_, message) return options.onMessage(message) end
+        config.onMessage = nil
+    elseif type(options.onLine) == 'function' then
+        config.onLine = function(_, message) return options.onLine(message) end
+    end
+    if type(options.onData) == 'function' then
+        config.onData = function(_, data) return options.onData(data) end
+    end
+    if type(options.onConnect) == 'function' then
+        config.onConnect = function() return options.onConnect() end
+    end
+    if type(options.onDisconnect) == 'function' then
+        config.onDisconnect = function(_, reason) return options.onDisconnect(reason) end
+    end
+    if type(options.onError) == 'function' then
+        config.onError = function(_, reason) return options.onError(reason) end
+    end
+
+    local client = TCP.Client.New(config)
+    local ok, err = client:Connect()
+    if not ok then return nil, err end
+    return client
 end
 
 return TCP.Client
