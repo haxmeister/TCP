@@ -3,8 +3,8 @@
 -- Copyright (c) 2022 Joshua S. Day. MIT license; see LICENSE.
 -- The native TCPSocket interface was documented by Andy Sloane (a1k0n).
 
-TCP = TCP or {}
-TCP._active = TCP._active or {} -- keep connected sockets alive
+local TCP = {}
+local active = {} -- keep connected sockets alive
 
 local function report(message)
     local text = '[TCP] ' .. tostring(message)
@@ -43,7 +43,7 @@ local function stop(self, reason, is_error)
     self.flushing = false
     clear_queue(self)
     self.input = ''
-    TCP._active[self] = nil
+    active[self] = nil
 
     if socket then
         pcall(function() socket:SetReadHandler(nil) end)
@@ -218,7 +218,7 @@ function TCP.Connect(host, port, options)
         self.state = 'connecting'
         clear_queue(self)
         self.input = ''
-        TCP._active[self] = true
+        active[self] = true
 
         local function current()
             return self.generation == generation and self.socket == socket
