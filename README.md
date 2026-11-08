@@ -56,7 +56,7 @@ conn:Connect()      -- starts async connect; onConnect runs when established
 - `onError(client, reason)` handles connection/transport errors. `onDisconnect(client, reason)` fires once when an **established** connection closes, including manual close. A failed connection attempt only calls `onError`.
 - No automatic reconnect yet. Call `Connect()` again when appropriate; the old connection is explicitly disconnected first.
 - `state` is `'disconnected'`, `'connecting'`, or `'connected'`. `pendingBytes` shows queued bytes.
-- Optional limits: `maxPendingBytes` (default 1048576), `maxLineBytes` (default 65536), `writeBudget` (default 65536 bytes per flush).
+- Optional limits: `maxPendingBytes` (default 1048576), `maxLineBytes` (default 65536 decoded bytes per line, excluding CRLF), `writeBudget` (default 65536 bytes per flush). When the queue is full, `Send()` rejects the entire new write instead of dropping part of it.
 
 Callbacks are invoked safely; callback errors are written to VO's log (or `print` when `log_print` is unavailable). They are not silently swallowed.
 
@@ -68,12 +68,14 @@ Run `perl examples/echo_server.pl` from a terminal at the root of this repositor
 - `/tcptestsend hello` — send a line
 - `/tcptestclose` — explicitly disconnect
 - `/tcptestreconnect` — replace connection, checking for duplicates server-side
+- `/tcpteststress` — send 256 KiB; expect `stress ok 262144` from the server
+- `/tcptestlimits` — verify an 8-byte queue accepts 8 bytes and rejects byte 9
 
-The echo server reports active connections and sends multiple lines to test buffering. Basic connect/send/receive/disconnect/reconnect behavior was observed in the November 2026 Linux VO client. Native EOF/error handling and whether reconnects temporarily overlap still need further verification.
+The echo server reports active connections and sends multiple lines to test buffering. It accepts a `STRESS 262144` header followed by exactly 262144 bytes, then sends an acknowledgment. Basic connect/send/receive, rapid reconnect without observed server-side overlap, clean peer closure, and refused connection were observed in the November 2026 Linux VO client. The new stress/limit commands and partial-send handling still need in-game verification.
 
 **Path note:** the relative path shown above is for a plugin loaded normally from `plugins/test/main.lua`. If running `dofile()` manually in the game console, the working directory may differ; console examples often use `plugins/TCP/client.lua` instead.
 
-To test logic outside Vendetta, run `lua tests/mock_socket.lua` with a standard Lua interpreter. The fake socket does not prove integration with VO.
+For automated checks outside Vendetta, run `lua tests/mock_socket.lua` and `lua tests/edge_cases.lua` from the repository root. These simulate partial sends, would-block, queue and line limits, and callback reentrancy, but do **not** prove native VO behavior under congestion. Syntax-check the Perl server with `perl -c examples/echo_server.pl`.
 
 ## Scope and credits
 
