@@ -87,6 +87,37 @@ function TCPTest.limits()
     end
 end
 
+
+-- Check a real multi-byte delimiter on a separate test port.
+function TCPTest.delimiter()
+    if TCPTest.delimiterConn then TCPTest.delimiterConn:Disconnect() end
+    local seen = {}
+    local conn, err = TCP.Connect('127.0.0.1', 54001, {
+        delimiter = '||',
+        onConnect = function()
+            print('[TCP delimiter] connected with || delimiter')
+        end,
+        onMessage = function(message)
+            print('[TCP delimiter] received: ' .. message)
+            seen[message] = true
+            if seen.first and seen.second and seen['echo: hello'] then
+                print('[TCP delimiter] PASS: received separate messages and echo with || delimiter')
+                if TCPTest.delimiterConn then TCPTest.delimiterConn:Disconnect() end
+            end
+        end,
+        onError = function(reason)
+            print('[TCP delimiter] error: ' .. tostring(reason))
+        end
+    })
+    TCPTest.delimiterConn = conn
+    if not conn then
+        print('[TCP delimiter] Connect failed: ' .. tostring(err))
+        return
+    end
+    local ok, why = conn:SendMessage('hello')
+    if not ok then print('[TCP delimiter] SendMessage failed: ' .. tostring(why)) end
+end
+
 function TCPTest.close()
     if TCPTest.conn then TCPTest.conn:Disconnect() end
 end
@@ -96,5 +127,6 @@ RegisterUserCommand('tcptestsend', TCPTest.send)
 RegisterUserCommand('tcptestclose', TCPTest.close)
 RegisterUserCommand('tcpteststress', TCPTest.stress)
 RegisterUserCommand('tcptestlimits', TCPTest.limits)
+RegisterUserCommand('tcptestdelimiter', TCPTest.delimiter)
 RegisterUserCommand('tcptestreconnect', TCPTest.connect)
-print('[TCP test] /tcptestconnect /tcptestsend text /tcptestclose /tcptestreconnect /tcpteststress /tcptestlimits')
+print('[TCP test] /tcptestconnect /tcptestsend text /tcptestclose /tcptestreconnect /tcpteststress /tcptestlimits /tcptestdelimiter')
