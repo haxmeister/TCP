@@ -6,10 +6,20 @@ The goal is to make socket connections **predictable**: explicit connect and dis
 
 ## Install
 
-Copy the `TCP` directory to your Vendetta Online `plugins` directory. Load it from your plugin:
+Copy the `TCP` directory to your Vendetta Online `plugins` directory, alongside your own plugin folder:
+
+```text
+plugins/
+├── TCP/
+│   └── client.lua
+└── test/
+    └── main.lua
+```
+
+When VO loads `test/main.lua` on startup, `dofile()` resolves relative to that plugin's directory. Load the shared library using the sibling directory path:
 
 ```lua
-local TCPClient = dofile('plugins/TCP/client.lua')
+local TCPClient = dofile('../TCP/client.lua')
 
 local conn = TCPClient.New({
     host = '127.0.0.1',
@@ -52,14 +62,16 @@ Callbacks are invoked safely; callback errors are written to VO's log (or `print
 
 ## Try it in Vendetta
 
-Run `perl examples/echo_server.pl` from a terminal, then install `examples/vo_test.lua` as a plugin's `main.lua` (adjust the `dofile` path if needed). In-game commands:
+Run `perl examples/echo_server.pl` from a terminal, then install `examples/vo_test.lua` as `plugins/test/main.lua`, keeping `plugins/TCP/client.lua` in its own sibling folder. In-game commands:
 
 - `/tcptestconnect` — open a connection
 - `/tcptestsend hello` — send a line
 - `/tcptestclose` — explicitly disconnect
 - `/tcptestreconnect` — replace connection, checking for duplicates server-side
 
-The echo server reports active connections and sends multiple lines to test buffering. **This still needs testing in the current VO client.** Native EOF/error behavior is not completely documented.
+The echo server reports active connections and sends multiple lines to test buffering. Basic connect/send/receive/disconnect/reconnect behavior was observed in the November 2026 Linux VO client. Native EOF/error handling and whether reconnects temporarily overlap still need further verification.
+
+**Path note:** the relative path shown above is for a plugin loaded normally from `plugins/test/main.lua`. If running `dofile()` manually in the game console, the working directory may differ; console examples often use `plugins/TCP/client.lua` instead.
 
 To test logic outside Vendetta, run `lua tests/mock_socket.lua` with a standard Lua interpreter. The fake socket does not prove integration with VO.
 
