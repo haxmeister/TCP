@@ -71,7 +71,7 @@ Run `perl examples/echo_server.pl` from a terminal at the root of this repositor
 - `/tcpteststress` — send 256 KiB; expect `stress ok 262144` from the server
 - `/tcptestlimits` — verify an 8-byte queue accepts 8 bytes and rejects byte 9
 
-The echo server reports active connections and sends multiple lines to test buffering. It accepts a `STRESS 262144` header followed by exactly 262144 bytes, then sends an acknowledgment. Basic connect/send/receive, rapid reconnect without observed server-side overlap, clean peer closure, and refused connection were observed in the November 2026 Linux VO client. The new stress/limit commands and partial-send handling still need in-game verification.
+The echo server reports active connections and sends multiple lines to test buffering. It accepts a `STRESS 262144` header followed by exactly 262144 bytes, then sends an acknowledgment. Basic connect/send/receive, rapid reconnect without observed server-side overlap, clean peer closure, and refused connection were observed in the November 2026 Linux VO client. The `/tcpteststress` and `/tcptestlimits` commands also passed in the live Linux VO client: the server acknowledged 262144 bytes and the client correctly rejected the ninth byte of an eight-byte pending queue. Forced native partial writes under congestion remain unverified in-game; the mock edge-case tests exercise the code paths deterministically.
 
 **Path note:** the relative path shown above is for a plugin loaded normally from `plugins/test/main.lua`. If running `dofile()` manually in the game console, the working directory may differ; console examples often use `plugins/TCP/client.lua` instead.
 
