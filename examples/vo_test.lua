@@ -1,5 +1,6 @@
--- Copy this to plugins/tcp-test/main.lua (adjust dofile if needed).
-local Client = dofile('plugins/TCP/client.lua')
+-- Install this as plugins/test/main.lua, with TCP/client.lua in plugins/TCP/.
+-- Relative dofile paths during normal plugin loading start in the plugin folder.
+local Client = dofile('../TCP/client.lua')
 TCPTest = TCPTest or {}
 
 function TCPTest.connect()
