@@ -14,7 +14,7 @@ my $listener = IO::Socket::INET->new(
     Proto => 'tcp',
 ) or die "listen: $!\n";
 my $select = IO::Select->new($listener);
-my (%buffer, %id, $next);
+my (%buffer, %id, %remaining, %expected, $next);
 print "Echo server on 127.0.0.1:54000 (CTRL-C to stop)\n";
 
 while (1) {
@@ -40,14 +40,37 @@ while (1) {
             printf "[%.3f] disconnected #%d (%d active)\n",
                 time(), delete($id{$fd}), $select->count - 1;
             delete($buffer{$fd});
+            delete($remaining{$fd});
+            delete($expected{$fd});
             next;
         }
         $buffer{$fd} .= $data;
-        while ((my $pos = index($buffer{$fd}, "\n")) >= 0) {
+        while (length $buffer{$fd}) {
+            if ($remaining{$fd}) {
+                my $take = length($buffer{$fd}) < $remaining{$fd}
+                    ? length($buffer{$fd}) : $remaining{$fd};
+                substr($buffer{$fd}, 0, $take, '');
+                $remaining{$fd} -= $take;
+                if (!$remaining{$fd}) {
+                    printf "client #%d: stress complete (%d bytes)\n", $id{$fd}, $expected{$fd};
+                    print {$sock} "stress ok $expected{$fd}\r\n";
+                    delete $remaining{$fd};
+                    delete $expected{$fd};
+                }
+                next;
+            }
+            my $pos = index($buffer{$fd}, "\n");
+            last if $pos < 0;
             my $line = substr($buffer{$fd}, 0, $pos + 1, '');
             $line =~ s/\r?\n\z//;
-            print "client #$id{$fd}: $line\n";
-            print {$sock} "echo: $line\r\n";
+            if ($line =~ /^STRESS ([0-9]+)$/ && $1 > 0 && $1 <= 4_194_304) {
+                $remaining{$fd} = $1;
+                $expected{$fd} = $1;
+                print "client #$id{$fd}: expecting $1 stress bytes\n";
+            } else {
+                print "client #$id{$fd}: $line\n";
+                print {$sock} "echo: $line\r\n";
+            }
         }
     }
 }
