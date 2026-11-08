@@ -29,7 +29,7 @@ while (1) {
             printf "[%.3f] connected #%d (%d active)\n",
                 time(), $id{$fd}, $select->count - 1;
             print {$client} "split";
-            print {$client} " line\r\nsecond line\n";
+            print {$client} " line\nsecond line\n";
             next;
         }
         my $fd = fileno($sock);
@@ -53,7 +53,7 @@ while (1) {
                 $remaining{$fd} -= $take;
                 if (!$remaining{$fd}) {
                     printf "client #%d: stress complete (%d bytes)\n", $id{$fd}, $expected{$fd};
-                    print {$sock} "stress ok $expected{$fd}\r\n";
+                    print {$sock} "stress ok $expected{$fd}\n";
                     delete $remaining{$fd};
                     delete $expected{$fd};
                 }
@@ -69,7 +69,7 @@ while (1) {
                 print "client #$id{$fd}: expecting $1 stress bytes\n";
             } else {
                 print "client #$id{$fd}: $line\n";
-                print {$sock} "echo: $line\r\n";
+                print {$sock} "echo: $line\n";
             }
         }
     }
