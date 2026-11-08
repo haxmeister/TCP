@@ -6,7 +6,7 @@ The goal is to make socket connections **predictable**: explicit connect and dis
 
 ## Install
 
-Copy the `TCP` directory to your Vendetta Online `plugins` directory, alongside your own plugin folder:
+To run the included test, copy the **`TCP` and `test` directories directly from this repository** into Vendetta Online's `plugins` directory. No renaming or editing is required:
 
 ```text
 plugins/
@@ -16,7 +16,7 @@ plugins/
     └── main.lua
 ```
 
-When VO loads `test/main.lua` on startup, `dofile()` resolves relative to that plugin's directory. Load the shared library using the sibling directory path:
+When VO loads `test/main.lua` on startup, `dofile()` resolves relative to that plugin's directory. Other plugins can use the shared library using the sibling directory path:
 
 ```lua
 local TCPClient = dofile('../TCP/client.lua')
@@ -62,7 +62,7 @@ Callbacks are invoked safely; callback errors are written to VO's log (or `print
 
 ## Try it in Vendetta
 
-Run `perl examples/echo_server.pl` from a terminal, then install `examples/vo_test.lua` as `plugins/test/main.lua`, keeping `plugins/TCP/client.lua` in its own sibling folder. In-game commands:
+Run `perl examples/echo_server.pl` from a terminal at the root of this repository. Copy the repository's ready-made **`TCP/`** and **`test/`** folders straight into Vendetta's `plugins/` folder; `test/main.lua` already contains the correct `dofile('../TCP/client.lua')` line. Restart or reload the game interface. In-game commands:
 
 - `/tcptestconnect` — open a connection
 - `/tcptestsend hello` — send a line
