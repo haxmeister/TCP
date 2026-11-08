@@ -49,12 +49,13 @@ first:connected(); eq(c.state,'connected'); eq(connected,1)
 eq(table.concat(first.sent),'hello\r\n'); eq(c.pendingBytes,0)
 first.recv={{'ab',nil}}; first.onRead(); eq(#lines,0)
 first.recv={{'c\r\nnext\npartial',nil}}; first.onRead(); eq(#lines,2);eq(lines[1],'abc');eq(lines[2],'next')
+assert(c:Send('ping')); eq(c.input,'partial')
 first.recv={{' end\n',nil}}; first.onRead(); eq(lines[3],'partial end')
 first.sends={2,-1,3}
 assert(c:Send('12345'));eq(c.pendingBytes,3)
 assert(first.onWrite); first.onWrite();eq(c.pendingBytes,3)
 first.onWrite();eq(c.pendingBytes,0)
-eq(table.concat(first.sent),'hello\r\n12345')
+eq(table.concat(first.sent),'hello\r\nping12345')
 
 local stale_read = first.onRead
 local stale_write = c.writeCallback
