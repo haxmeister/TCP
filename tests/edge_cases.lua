@@ -147,4 +147,19 @@ fresh.read_queue = {{'new\n', nil}}
 fresh.on_read(); eq(messages[1], 'new')
 switched:Disconnect()
 
+-- The length limit excludes CRLF. CR and LF may arrive separately.
+local bounded_lines, bounded_errors = {}, {}
+local framed = new({
+    maxLineBytes = 3,
+    onLine = function(_, line) bounded_lines[#bounded_lines + 1] = line end,
+    onError = function(_, err) bounded_errors[#bounded_errors + 1] = err end
+})
+assert(framed:Connect()); local f = latest(); f:establish()
+f.read_queue = {{'abc\r', nil}}
+f.on_read(); eq(framed.state, 'connected'); eq(#bounded_lines, 0)
+f.read_queue = {{'\n', nil}}
+f.on_read(); eq(bounded_lines[1], 'abc'); eq(framed.state, 'connected')
+f.read_queue = {{'abcd\n', nil}}
+f.on_read(); eq(framed.state, 'disconnected'); eq(#bounded_errors, 1)
+
 print('PASS: write budgets, partial writes, would-block, queue limits, hard errors, and reentrancy')
