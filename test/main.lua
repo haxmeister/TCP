@@ -13,6 +13,9 @@ function TCPTest.connect()
         end,
         onLine = function(conn, line)
             print('[TCP test] received: ' .. line)
+            if line == 'stress ok 262144' then
+                print('[TCP test] PASS: server received all 262144 stress bytes')
+            end
         end,
         onDisconnect = function(conn, reason)
             print('[TCP test] disconnected: ' .. tostring(reason))
