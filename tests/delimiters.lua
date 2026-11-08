@@ -28,7 +28,7 @@ local function socket() return sockets[#sockets] end
 
 local messages, connected, closed = {}, 0, 0
 local c = TCP.Connect('127.0.0.1', 54000, {
-    delimiter = '\r\n', maxLineBytes = 3,
+    delimiter = '\r\n', maxMessageBytes = 3,
     onConnect = function() connected=connected+1 end,
     onMessage = function(msg) messages[#messages+1] = msg end,
     onDisconnect = function() closed=closed+1 end
@@ -47,7 +47,7 @@ a:feed('abcd\r\n'); eq(c.state,'disconnected'); eq(closed,1); eq(a.closed,1)
 
 local multi={}
 local b=TCP.Connect('127.0.0.1',54000,{
-    delimiter='abab', maxLineBytes=4,
+    delimiter='abab', maxMessageBytes=4,
     onMessage=function(msg) multi[#multi+1]=msg end
 })
 local s=socket();s:ready()
