@@ -1,282 +1,223 @@
---[[
-Author:   Joshua S. Day (haxmeister) haxmeister@hotmail.com
+-- Vendetta Online TCP client wrapper.
+-- Uses only VO's native TCPSocket and ordinary Lua tables (no metatables).
+-- Copyright (c) 2022 Joshua S. Day. MIT license; see LICENSE.
+-- The native TCPSocket interface was documented by Andy Sloane (a1k0n).
 
-Website:  www.haxmeister.com
+TCP = TCP or {}
+TCP.Client = TCP.Client or {}
+TCP.Client._active = TCP.Client._active or {} -- prevent active sockets from being collected
 
-License:  free for use/copy/modification/and redistribution
-          with latest MIT license 2022 https://mit-license.org/
+local function report(message)
+    local text = '[TCP] ' .. tostring(message)
+    if type(log_print) == 'function' then log_print(text) else print(text) end
+end
 
-Addendum: nerd cred required, please mention the name of the authors
-          who's code you have modified if you make your own mod
+local function notify(self, name, ...)
+    local callback = self[name]
+    if type(callback) ~= 'function' then return end
+    local ok, err = pcall(callback, self, ...)
+    if not ok then report(name .. ' callback failed: ' .. tostring(err)) end
+end
 
-Credits:  Andy Sloane (a1k0n)
+local function clear_queue(self)
+    self.queue = {}
+    self.head, self.tail, self.offset = 1, 0, 1
+    self.pendingBytes = 0
+    self.input = ''
+end
 
-Purpose:  This is a re-write of the original socket abstraction
-          that was written by Andy Sloane, a1k0n, one of the Vendetta
-          Online developers over at Guild Software
-          http://www.guildsoftware.com/company.html
-          it is meant to abstract plugin writers from the minutia of
-          writing buffering code for their socket connected plugins
+local function stop(self, reason, is_error)
+    if self.state == 'disconnected' then return end
+    local was_connected = self.state == 'connected'
+    local socket = self.socket
+    self.state = 'disconnected'
+    self.generation = self.generation + 1
+    self.socket = nil
+    self.writeCallback = nil
+    self.flushing = false
+    clear_queue(self)
+    TCP.Client._active[self] = nil
 
-NOTE:     This is not a drop in replacement for the original due to a changed interface!
-]]
+    if socket then
+        pcall(function() socket:SetReadHandler(nil) end)
+        pcall(function() socket:SetWriteHandler(nil) end)
+        pcall(function() socket:Disconnect() end)
+    end
+    if is_error then notify(self, 'onError', reason) end
+    if was_connected then notify(self, 'onDisconnect', reason) end
+end
 
-declare ("TCP", TCP or {})
-TCP.Client = {}
-function TCP.Client.New(argTable) -- accepts a table
-    local object = {}
-    object['socket']       = TCPSocket()
-    object['timer']        = Timer()
-    object['connected']    = false
-    object['host']         = argTable['host']
-    object['port']         = argTable['port']
-    object['attemptsMax']  = argTable['attemptsMax'] or 5
-    object['reconnect']    = argTable['reconnect'] or true
-    object['attempts']     = 0
-    object['reconTime']    = argTable['reconTime'] or 10 --seconds
-    object['inBuf']        = ''
-    object['outBuf']       = {}
-    object['onMessage']    = argTable['onMessage']   or function() end --- when message received
-    object['onDisconnect'] = argTable['onDisconnect']or function() end --- when disconnected
-    object['onConnect']    = argTable['onConnect']   or function() end --- when connected
-    object['onReconnect']  = argTable['onReconnect'] or function() end --- when a reconnect attempt starts-receives attempt number
-    object['onGiveup']     = argTable['onGiveup']    or function() end --- when all reconnect attempts are exhausted
-    object['onFail']       = argTable['onFail']      or function() end --- when a connection attempt fails
-    object['debugging']    = false
-    --------------------SOCKET METHODS-----------------------
-    --object:Connect(host,port)
-    --object:Disconnect()
-    --object:Listen() -- listen on a port (servers)
-    --object:Accept() -- returns new connection object (servers)
-    --object:SetConnectHandler(fn) -- when a new incoming connection (servers)
-    --object:SetReadHandler(fn)
-    --object:SetWriteHandler(fn) -- buffer ready for writing or connection completes?
-    --object:Send(string) -- returns num of bytes sent
-    --object:Recv() -- returns the message, and error code
-    --object:GetSocketError() --returns string "error"
-    --object:GetPeerName() -- returns string "host:port"
-
-    function object:Send(line)
-        assert(type(line) == "string", "send is supposed to receive a string but instead got: "..type(line))
-        self:debugMsg("object:send() received - "..line)
-        if not self:_ConnStatus() then
-            self:debugMsg("can't send if not connected, clearing send buffer")
-            self.outBuf = {}
+local function flush(self)
+    if self.state ~= 'connected' or self.flushing then return end
+    self.flushing = true
+    local socket = self.socket
+    local generation = self.generation
+    local budget = self.writeBudget
+    while self.state == 'connected' and self.generation == generation
+          and self.head <= self.tail and budget > 0 do
+        local chunk = self.queue[self.head]
+        local remaining = string.sub(chunk, self.offset)
+        local piece = string.sub(remaining, 1, math.min(budget, 65536))
+        local ok, sent = pcall(function() return socket:Send(piece) end)
+        if not ok or type(sent) ~= 'number' or sent < -1 or sent > #piece then
+            self.flushing = false
+            stop(self, 'send failed: ' .. tostring(sent), true)
             return
         end
-        -- add the line to the out buffer for sending
-        -- (this will add the line to the tail or bottom of the queue
-        table.insert(self.outBuf, line)
-        self.socket:SetWriteHandler(function() self:WriteHandler() end)
-        self:WriteHandler()
-    end
-
-    function object:ConnectionHandler()
-        self:debugMsg("TCP connection handler")
-        local isconnected, err = self:_ConnStatus()
-        if isconnected then
-            self.attempts = 0
-            self:debugMsg("TCP connection handler setting write handler to write handler")
-            self.socket:SetWriteHandler(function() self:WriteHandler() end)
-            self:debugMsg("TCP connection handler setting read handler to readHandler")
-            self.socket:SetReadHandler(function() self:ReadHandler() end)
-            self:onConnect()
+        -- -1 means 'would block' in the historical VO wrappers; retry on write readiness.
+        if sent == -1 or sent == 0 then break end
+        self.pendingBytes = self.pendingBytes - sent
+        budget = budget - sent
+        if sent == #remaining then
+            self.queue[self.head] = nil
+            self.head = self.head + 1
+            self.offset = 1
         else
-            self:debugMsg("TCP connection handler says connection bad, now onfail and disconnect handler")
-            self:onFail(err)
-            self:Disconnect()
-            self:DisconnectHandler()
+            self.offset = self.offset + sent
+            if sent < #piece then break end -- partial send; wait for the next write event
         end
     end
-
-    function object:WriteHandler()
-        self:debugMsg("TCP writehandler")
-
-        if (not next(self.outBuf) ) then
-            self:debugMsg("outbuf empty nothing to write")
-            self.socket:SetWriteHandler(nil)
-            return
-        end
-
-        local chars_sent = self.socket:Send( self.outBuf[1] )
-
-        -- if it failed to send the message at all, we find out here
-        if  (chars_sent == -1) then
-            local err = self.socket:GetSocketError() or chars_sent
-            -- could have been an EWOULDBLOCK but we can't tell
-            self:debugMsg("writeHandler failed to send message with err: "..tostring(err))
-            -- schedule this function to try again when the the buffer is ready
-            self.socket:SetWriteHandler(function() self:WriteHandler() end)
-
-        -- if it sent the string but only sent a portion of it, we find out here
-        elseif (chars_sent < string.len( self.outBuf[1] ) ) then
-            self:debugMsg("writeHandler sent partial string")
-            -- because only a portion of this line has been seent,
-            -- we will remove the portion of the line that was sent and
-            -- leave the rest to be sent when the loop comes back around
-            self.outBuf[1] = string.sub(self.outBuf[1], chars_sent+1, -1)
-
-            -- schedule to try again when the the buffer is ready
-            self.socket:SetWriteHandler(function() self:WriteHandler() end)
-        else
-            self:debugMsg("writeHandler successfuly sent - "..self.outBuf[1])
-
-            -- we land here because it appears the entire line was sent
-            -- so lets remove that line from the top of the out buffer
-            table.remove( self.outBuf,1 )
-            -- schedule this function to run again to send the next line
-            self.socket:SetWriteHandler(function() self:WriteHandler() end)
-        end
+    self.flushing = false
+    if self.state ~= 'connected' or self.generation ~= generation then return end
+    if self.head > self.tail then
+        clear_queue(self)
+        socket:SetWriteHandler(nil)
+    else
+        socket:SetWriteHandler(self.writeCallback)
     end
+end
 
-    function object:ReadHandler()
-        self:debugMsg("TCP read handler")
-
-        local msg, errcode = self.socket:Recv()
-
-        if not msg then
-            if not errcode then
-                return
-            end
-
-            local err = self.socket:GetSocketError()
-            self:debugMsg("TCP read handler found errcode: "..tostring(errcode).." and sock error: "..tostring(err))
-            self:Disconnect()
-            self:DisconnectHandler(err)
+local function received(self, data, generation)
+    if self.mode == 'raw' then
+        notify(self, 'onData', data)
+        return
+    end
+    self.input = self.input .. data
+    while self.state == 'connected' and self.generation == generation do
+        local newline = string.find(self.input, '\n', 1, true)
+        if not newline then break end
+        if newline - 1 > self.maxLineBytes then
+            stop(self, 'received line exceeds maxLineBytes', true)
             return
         end
+        local line = string.sub(self.input, 1, newline - 1)
+        self.input = string.sub(self.input, newline + 1)
+        if string.sub(line, -1) == '\r' then line = string.sub(line, 1, -2) end
+        notify(self, 'onLine', line)
+    end
+    if self.state == 'connected' and self.generation == generation
+       and #self.input > self.maxLineBytes then
+        stop(self, 'received line exceeds maxLineBytes', true)
+    end
+end
 
-        self:_readToBuffer(msg)
+function TCP.Client.New(options)
+    assert(type(options) == 'table', 'TCP.Client.New expects an options table')
+    assert(type(options.host) == 'string', 'host must be a string')
+    assert(type(options.port) == 'number', 'port must be a number')
+    local self = {
+        host = options.host, port = options.port,
+        mode = options.mode or 'line',
+        onConnect = options.onConnect,
+        onDisconnect = options.onDisconnect,
+        onError = options.onError,
+        onLine = options.onLine or options.onMessage,
+        onData = options.onData,
+        maxLineBytes = options.maxLineBytes or 65536,
+        maxPendingBytes = options.maxPendingBytes or 1048576,
+        writeBudget = options.writeBudget or 65536,
+        state = 'disconnected', generation = 0,
+        flushing = false, socket = nil
+    }
+    assert(self.mode == 'line' or self.mode == 'raw', 'mode must be line or raw')
+    assert(self.maxLineBytes > 0 and self.maxPendingBytes > 0 and self.writeBudget > 0,
+           'buffer limits must be positive')
+    clear_queue(self)
 
-        local match
-        repeat
-            self.inBuf,match = string.gsub(self.inBuf, "^([^\r\n]*)\r\n", function(line)
-            pcall(self.onMessage,self, line)
-            return ''
-            end)
-        until match==0
+    function self:Send(data)
+        if self.state ~= 'connected' and self.state ~= 'connecting' then
+            return nil, 'not connected'
+        end
+        if type(data) ~= 'string' then return nil, 'Send expects a string' end
+        if #data == 0 then return true end
+        if self.pendingBytes + #data > self.maxPendingBytes then
+            return nil, 'outgoing buffer is full'
+        end
+        self.tail = self.tail + 1
+        self.queue[self.tail] = data
+        self.pendingBytes = self.pendingBytes + #data
+        if self.state == 'connected' then flush(self) end
         return true
     end
 
-    function object:DisconnectHandler()
-        self:debugMsg("TCP disconnect handler")
+    function self:SendLine(line)
+        if type(line) ~= 'string' then return nil, 'SendLine expects a string' end
+        if string.find(line, '\n', 1, true) then return nil, 'line contains newline' end
+        return self:Send(line .. '\r\n')
+    end
 
-        -- are we connected or not?
-        local isconnected, err = self:_ConnStatus()
-        if isconnected then
-            self.connected = true
-            return
+    function self:Disconnect()
+        stop(self, 'local disconnect', false)
+    end
+
+    function self:Connect(host, port)
+        if host ~= nil then self.host = host end
+        if port ~= nil then self.port = port end
+        if self.state ~= 'disconnected' then stop(self, 'replaced', false) end
+        self.generation = self.generation + 1
+        local generation = self.generation
+        local socket = TCPSocket()
+        self.socket = socket
+        self.state = 'connecting'
+        clear_queue(self)
+        TCP.Client._active[self] = true
+
+        local function current()
+            return self.generation == generation and self.socket == socket
         end
-        -- we are disconnected supposedly but let's call this again to clear it out
-        self:debugMsg("TCP disconnect handler calling Disconnect()")
-        self:Disconnect()
-        -- leave it we are not allowed to reconnect
-        if not self.reconnect then return end
-
-        -- reconnect loop attempts to maximum allowed
-        self.timer:SetTimeout(self.reconTime * 1000,function()
-                self:debugMsg("TCP reconnect timer callback")
-                self.attempts = self.attempts + 1
-                self:onReconnect(self.attempts)
-                if self.timer:IsActive() then return end
-                if self:_ConnStatus() then
-                    self:debugMsg("TCP reconnect timer callback says connected ")
-                    self.connected = true
-                    self.timer:Kill()
-                    return
-                elseif self.attempts ~= self.attemptsMax then
-                    self:debugMsg("TCP reconnect timer callback says more attempts available")
-                    self:Disconnect()
-                    self:Connect()
-                    self.timer:SetTimeout(self.reconTime * 1000)
-                    return
-                else
-                    self:debugMsg("TCP reconnect timer callback says out of tries")
-                    self.timer:Kill()
-                    self:Disconnect() -- for good measure??
-                    self:onGiveup()
-                    self.attempts = 0
+        local function on_read()
+            if not current() or self.state ~= 'connected' then return end
+            local ok, data, err = pcall(function() return socket:Recv() end)
+            if not ok then
+                stop(self, 'receive failed: ' .. tostring(data), true)
+            elseif data == nil then
+                -- Old VO API reports nil,nil for 'nothing available'.
+                -- EAGAIN/WOULDBLOCK may also appear as numeric errno.
+                if err ~= nil and err ~= 11 and err ~= 35 and err ~= 10035 then
+                    stop(self, 'receive ended: ' .. tostring(err), err ~= 0)
+                end
+            elseif data == '' then
+                stop(self, 'peer closed', false) -- confirm EOF behavior in VO
+            else
+                received(self, data, generation)
+            end
+        end
+        local function on_write()
+            if not current() then return end
+            if self.state == 'connecting' then
+                local ok, peer = pcall(function() return socket:GetPeerName() end)
+                if not ok or not peer then
+                    local err_ok, err = pcall(function() return socket:GetSocketError() end)
+                    stop(self, 'connect failed: ' .. tostring(err_ok and err or peer), true)
                     return
                 end
+                self.state = 'connected'
+                socket:SetReadHandler(on_read)
+                notify(self, 'onConnect')
             end
-        )
-    end
-
-    function object:Connect()
-        self:debugMsg("TCP connect")
-        if self.connected then
-            self:Disconnect()
+            if current() and self.state == 'connected' then flush(self) end
         end
-        self:debugMsg("TCP connect setting write handler to connection handler")
-        self.socket:SetWriteHandler(function() self:ConnectionHandler() end)
-        --self:debugMsg("TCP connect setting read handler to readHandler")
-        --self.socket:SetReadHandler(function() self:ReadHandler() end)
-        local success, err = self.socket:Connect(self.host, self.port)
-
-        if success then
-            self:debugMsg("TCP connect call success")
-            self.connected = true
-            self:debugMsg("TCP waiting for connection to complete")
+        self.writeCallback = on_write
+        socket:SetWriteHandler(on_write)
+        local ok, success, err = pcall(function() return socket:Connect(self.host, self.port) end)
+        if not ok or not success then
+            stop(self, 'connect failed: ' .. tostring(ok and err or success), true)
+            return nil, err or success
         end
-
-        if err then
-            self.connected = false
-            self:debugMsg("TCP connect call fail with error "..err)
-        end
-
-        --self:debugMsg("TCP connect setting timer")
-        --self.timer:SetTimeout(self.reconTime * 1000, function() self:DisconnectHandler() end)
+        return true -- connect *started*, not yet completed
     end
 
-    function object:Disconnect()
-        self:debugMsg("TCP disconnect")
-        self.connected = false
-        self.socket:Disconnect()
-        self.socket = nil
-        self.socket = TCPSocket()
-        self:onDisconnect()
-    end
-
-    function object:_ConnStatus()
-        local errormsg = self.socket:GetSocketError()
-        local peer = self.socket:GetPeerName()
-        local status
-
-        if peer then
-            self:debugMsg("---status connected to "..tostring(peer).." with errors "..tostring(errormsg))
-            status = true
-        end
-
-        if errormsg then
-            self:debugMsg("---status disconnected with errors "..tostring(errormsg))
-            status = false
-        end
-
-        return status, errormsg
-    end
-
-    function object:_readToBuffer(msg)
-        self.inBuf = self.inBuf..msg or msg
-    end
-
-    function object:debugMsg(msg)
-        if self.debugging then
-            print("[TCP] "..msg)
-        end
-    end
-
-    function object:Debug(value)
-        self.debugging = value
-    end
-    ------------------------INITIALIZE--------------------------
-
-    return object
+    return self
 end
 
-
-
-
-
-
-
-
+return TCP.Client
