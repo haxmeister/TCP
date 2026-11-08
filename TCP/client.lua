@@ -115,18 +115,24 @@ local function received(self, data, generation)
     while self.state == 'connected' and self.generation == generation do
         local newline = string.find(self.input, '\n', 1, true)
         if not newline then break end
-        if newline - 1 > self.maxLineBytes then
-            stop(self, 'received line exceeds maxLineBytes', true)
-            return
-        end
         local line = string.sub(self.input, 1, newline - 1)
         self.input = string.sub(self.input, newline + 1)
         if string.sub(line, -1) == '\r' then line = string.sub(line, 1, -2) end
+        if #line > self.maxLineBytes then
+            stop(self, 'received line exceeds maxLineBytes', true)
+            return
+        end
         notify(self, 'onLine', line)
     end
-    if self.state == 'connected' and self.generation == generation
-       and #self.input > self.maxLineBytes then
-        stop(self, 'received line exceeds maxLineBytes', true)
+    -- A trailing CR may be followed by LF in the next read.
+    -- maxLineBytes limits the decoded line, not its CRLF terminator.
+    if self.state == 'connected' and self.generation == generation then
+        local pending = #self.input
+        if pending > self.maxLineBytes and not
+           (pending == self.maxLineBytes + 1 and
+            string.sub(self.input, -1) == '\r') then
+            stop(self, 'received line exceeds maxLineBytes', true)
+        end
     end
 end
 
